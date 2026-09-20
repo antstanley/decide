@@ -616,6 +616,94 @@ fn auth_status_does_not_accept_an_answer_that_is_not_the_apis() {
 }
 
 #[test]
+fn auth_status_refuses_a_json_200_that_is_not_the_models_list() {
+    // A responder that ignores the Authorization header and answers JSON of its own: a
+    // proxy, a captive portal, or a base URL pointing at some other service.
+    let server = FakeServer::start(vec![Reply::json(r#"{"status":"ok","proxy":"corporate"}"#)]);
+    let (_key, key) = key_file();
+
+    let outcome = run(
+        &[
+            "decide",
+            "auth",
+            "status",
+            "--base-url",
+            &server.url(),
+            "--api-key-file",
+            &key,
+        ],
+        "",
+        true,
+    );
+
+    let error = outcome.result.expect_err("that is not the API answering");
+    assert_eq!(error.exit_code(), 1);
+    assert!(
+        outcome.stdout.is_empty(),
+        "no verdict is printed for a non-answer"
+    );
+    let rendered = error.to_string();
+    assert!(rendered.contains("without a models list"), "{rendered}");
+    assert!(
+        rendered.contains("--base-url"),
+        "it says what to check: {rendered}"
+    );
+}
+
+#[test]
+fn auth_status_accepts_the_models_list_and_ignores_extra_fields() {
+    let server = FakeServer::start(vec![Reply::json(
+        r#"{"models":[{"name":"jev-latest"}],"region":"eu"}"#,
+    )]);
+    let (_key, key) = key_file();
+
+    let outcome = run(
+        &[
+            "decide",
+            "auth",
+            "status",
+            "--base-url",
+            &server.url(),
+            "--api-key-file",
+            &key,
+        ],
+        "",
+        true,
+    );
+
+    assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+    assert!(
+        outcome.stdout.contains("the API accepted the key"),
+        "{}",
+        outcome.stdout
+    );
+}
+
+#[test]
+fn models_still_prints_a_body_it_does_not_recognise() {
+    // The response is parsed tolerantly (D8), and the check above must not have changed
+    // that: `models` prints whatever came back, whatever shape it is.
+    let server = FakeServer::start(vec![Reply::json(r#"{"status":"ok"}"#)]);
+    let (_key, key) = key_file();
+
+    let outcome = run(
+        &[
+            "decide",
+            "models",
+            "--base-url",
+            &server.url(),
+            "--api-key-file",
+            &key,
+        ],
+        "",
+        true,
+    );
+
+    assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+    assert_eq!(outcome.stdout, "{\"status\":\"ok\"}\n");
+}
+
+#[test]
 fn auth_status_no_check_makes_no_call() {
     // A server that would answer `500` loudly if anything asked it anything.
     let server = FakeServer::start(vec![Reply::status(500, "should not be called")]);

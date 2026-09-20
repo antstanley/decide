@@ -271,8 +271,11 @@ claims live in `tests/run.rs` and `tests/binary.rs`.
 - **`auth status` dials; `--no-check` is the local mode.** The call is `GET /v1/models`
   because it needs the same token and spends no tokens; it refuses a `200` that is not the
   API's answer, and it lets a refused key travel as the ordinary `401` status path so the
-  exit code needs no new case. With no credential it ends in `NoCredentialConfigured`
-  (exit `2`), which is the missing-key error plus the path the store would use.
+  exit code needs no new case. **A `200` is not enough**: the body must list models
+  (`ModelsResponse::lists_models`), because a proxy or a captive portal answers `200` with
+  JSON of its own, and a check that calls that an acceptance reports a key as working that
+  was never exercised. With no credential it ends in `NoCredentialConfigured` (exit `2`),
+  which is the missing-key error plus the path the store would use.
 - **The one file `decide` writes is the credential, not a config file.** It is a token in a
   file — not parsed, not merged, mode 0600 — and adding a second key to it is the point at
   which [D13](docs/design.md#d13-one-credential-store-and-still-no-configuration-file)'s

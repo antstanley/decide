@@ -379,7 +379,7 @@ The verdict goes on stdout after the source, and the exit code is the call's:
 |---|---|---|
 | the API accepted the key | `0` | stdout: the source, then `the API accepted the key` |
 | the API refused it | `1` | stderr: the `401`, its reason phrase, and its body, as any other call reports one |
-| the call could not be made | `1` | stderr: the transport failure and the attempt count, or the status that came back — including a `200` that is not the API's answer |
+| the call could not be made | `1` | stderr: the transport failure and the attempt count, or the status that came back — including a `200` whose body is not a models list, which is what a proxy or a captive portal answers |
 | no credential is configured | `2` | stderr: the three ways to supply one, and the path the store would use |
 
 so the script is the one a caller already knows:

@@ -760,6 +760,18 @@ impl ModelsResponse {
         Ok(Self { value })
     }
 
+    /// Whether the body lists any model at all.
+    ///
+    /// JSON is not enough to call a response an answer: a proxy, a captive portal, or a
+    /// base URL pointing at some other service can answer `200` with a body of its own, and
+    /// the tolerant parse above would accept it. What this requires is the shape the
+    /// documentation shows — a `models` array holding at least one entry with a `name` —
+    /// and no more than that, so an extra field is still ignored.
+    #[must_use]
+    pub fn lists_models(&self) -> bool {
+        !self.models().is_empty()
+    }
+
     /// The models the body lists, skipping any entry that is not an object with a name.
     #[must_use]
     pub fn models(&self) -> Vec<Model> {
@@ -1318,6 +1330,31 @@ mod tests {
                 .and_then(|model| model.release_date.as_deref()),
             Some("2026-09-12")
         );
+    }
+
+    #[test]
+    fn only_a_models_list_counts_as_the_apis_answer() {
+        let answer = |json: &str| {
+            ModelsResponse::from_slice(json.as_bytes())
+                .expect("valid JSON parses")
+                .lists_models()
+        };
+
+        // The shape the documentation shows, and one entry with a name is enough.
+        assert!(answer(r#"{"models":[{"name":"jev-latest"}]}"#));
+        assert!(answer(
+            r#"{"models":[{"name":"jev-latest","description":"d","release_date":"r"}],"extra":1}"#
+        ));
+        assert!(answer(include_str!("../tests/data/models.json")));
+
+        // Everything else is JSON that is not the API answering: a proxy, a captive portal,
+        // or a base URL pointing at some other service.
+        assert!(!answer(r#"{"status":"ok","proxy":"corporate"}"#));
+        assert!(!answer("{}"));
+        assert!(!answer(r#"{"models":[]}"#));
+        assert!(!answer(r#"{"models":"jev-latest"}"#));
+        assert!(!answer(r#"{"models":[{"no_name":"x"}]}"#));
+        assert!(!answer("[]"));
     }
 
     #[test]

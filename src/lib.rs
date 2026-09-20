@@ -221,9 +221,9 @@ fn run_eval<In: Read, Out: Write, Err: Write>(
         return emit(&mut io.stdout, &text);
     }
 
-    let config = client_config(&cli.global)?;
+    let call_config = client_config(&cli.global)?;
     let body = report::render_json(&request.to_value(), false);
-    let response_text = client::post_systemone(&config, &body, &mut io.stderr)?;
+    let response_text = client::post_systemone(&call_config, &body, &mut io.stderr)?;
 
     let response = wire::Response::from_slice(response_text.as_bytes(), &request)?;
     let text = render_response(&response, &request, eval, &cli.global)?;
@@ -235,8 +235,8 @@ fn run_models<In: Read, Out: Write, Err: Write>(
     cli: &Cli,
     io: &mut Io<In, Out, Err>,
 ) -> Result<(), DecideError> {
-    let config = client_config(&cli.global)?;
-    let body = client::get_models(&config, &mut io.stderr)?;
+    let call_config = client_config(&cli.global)?;
+    let body = client::get_models(&call_config, &mut io.stderr)?;
     let response = wire::ModelsResponse::from_slice(body.as_bytes())?;
 
     let text = match &cli.global.select {
@@ -338,9 +338,23 @@ fn check_credential<In: Read, Out: Write, Err: Write>(
     global: &GlobalArgs,
     io: &mut Io<In, Out, Err>,
 ) -> Result<(), DecideError> {
-    let config = client_config_with(global, api_key)?;
-    let body = client::get_models(&config, &mut io.stderr)?;
-    wire::ModelsResponse::from_slice(body.as_bytes())?;
+    let call_config = client_config_with(global, api_key)?;
+    let body = client::get_models(&call_config, &mut io.stderr)?;
+    let listed = wire::ModelsResponse::from_slice(body.as_bytes())?;
+
+    // A `200` is not an acceptance on its own, and neither is a `200` holding JSON: only
+    // the models list is evidence that the request reached the API. Without this, a base
+    // URL pointing at a proxy — or at anything else that answers JSON — reports a key as
+    // working that was never exercised, which is worse than no check at all.
+    if !listed.lists_models() {
+        return Err(DecideError::ResponseContract {
+            problem: format!(
+                "GET {}/v1/models answered 200 without a models list, so the key was never \
+                 exercised; is --base-url pointing at the API?",
+                call_config.base_url
+            ),
+        });
+    }
     Ok(())
 }
 

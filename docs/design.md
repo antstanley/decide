@@ -470,8 +470,11 @@ The call is `GET /v1/models`. It needs the same bearer token, and unlike an eval
 spends no tokens, which is what makes it cheap enough to run after every `auth set`. A key
 the API refuses is left as the `401` the rest of the program already reports, so the exit
 code, the reason phrase, and the body are ones a caller has read before:
-`decide auth status || exit 1` is the whole script. A `200` that is not the API's answer —
-a proxy, a captive portal — is not an acceptance, because the check parses the body. With no
+`decide auth status || exit 1` is the whole script. A `200` is not an acceptance on its own:
+the body must be a models list, not merely JSON that parsed. A proxy, a captive portal, or a
+base URL pointing at some other service can all answer `200` with a body of their own, and a
+check that accepts any well-formed body would report a key as working that was never
+exercised — worse than no check at all, because it is believed. With no
 credential, there is nothing to exercise and nothing to describe, so the command ends the
 way every other one does when the credential is missing: exit `2`, naming the three ways in
 and the path the store would use.
