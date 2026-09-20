@@ -248,12 +248,12 @@ pub enum AuthCommand {
     #[command(long_about = AUTH_UNSET_LONG_ABOUT)]
     Unset,
 
-    /// Say where the credential comes from, without printing it
+    /// Say where the credential comes from, and whether the API accepts it
     #[command(long_about = AUTH_STATUS_LONG_ABOUT)]
     Status {
-        /// Call the API and check that it accepts the key
+        /// Report the source without calling the API
         #[arg(long)]
-        check: bool,
+        no_check: bool,
     },
 }
 
@@ -353,6 +353,7 @@ it for one run.
   decide auth set
   printf %s "$TOKEN" | decide auth set
   decide auth status
+  decide auth status --no-check
   decide auth unset"#;
 
 /// `decide auth set --help`'s long description.
@@ -378,16 +379,19 @@ still supplies a credential after this.";
 const AUTH_STATUS_LONG_ABOUT: &str = r"Say which source supplies the credential, and whether the API accepts it.
 
   decide auth status
-  decide auth status --check
+  decide auth status --no-check
 
 The order is TYPESAFE_API_KEY, then --api-key-file or TYPESAFE_API_KEY_FILE, then the
-store. The value is never printed, and without --check nothing leaves the machine.
+store. The value is never printed.
 
-With --check, one GET /v1/models is made with the credential that was found. It costs
-no tokens, and it answers the question the other way round: whether the key the API
-holds is the key you hold. A key the API refuses is the 401 it is, so a script can stop
-with `decide auth status --check || exit 1`, and a --check that cannot reach the API
-says so rather than reporting the key as good.";
+One GET /v1/models is made with the credential that was found. It costs no tokens, and
+it answers the other half of the question: whether the key the API holds is the key you
+hold. A key the API refuses is the 401 it is, so `decide auth status` alone stops a
+script whose key would not have worked, and a call that could not be made says so rather
+than reporting the key as good. --timeout, --retries and --backoff-ms apply to it.
+
+--no-check asks only where the credential comes from. It needs no network and no valid
+key, which is the question to ask when the API itself is what is in doubt.";
 
 /// `decide score --help`'s long description.
 const SCORE_LONG_ABOUT: &str = r#"Ask for a position along ordered levels you define.
@@ -630,7 +634,7 @@ mod tests {
         for (argument, expected) in [
             ("set", AuthCommand::Set),
             ("unset", AuthCommand::Unset),
-            ("status", AuthCommand::Status { check: false }),
+            ("status", AuthCommand::Status { no_check: false }),
         ] {
             let cli = accepted(&["decide", "auth", argument]);
             let Command::Auth { command } = &cli.command else {
@@ -664,27 +668,27 @@ mod tests {
     }
 
     #[test]
-    fn check_is_a_flag_on_status_and_nowhere_else() {
-        let cli = accepted(&["decide", "auth", "status", "--check"]);
-        let Command::Auth { command } = &cli.command else {
-            panic!("that is the auth subcommand");
-        };
-        assert_eq!(command, &AuthCommand::Status { check: true });
-
+    fn status_checks_by_default_and_no_check_is_the_way_out() {
         let cli = accepted(&["decide", "auth", "status"]);
         let Command::Auth { command } = &cli.command else {
             panic!("that is the auth subcommand");
         };
         assert_eq!(
             command,
-            &AuthCommand::Status { check: false },
-            "the check is opt-in: status is local and instant by default"
+            &AuthCommand::Status { no_check: false },
+            "the API call is what status does unless it is told otherwise"
         );
+
+        let cli = accepted(&["decide", "auth", "status", "--no-check"]);
+        let Command::Auth { command } = &cli.command else {
+            panic!("that is the auth subcommand");
+        };
+        assert_eq!(command, &AuthCommand::Status { no_check: true });
 
         for action in ["set", "unset"] {
             assert!(
-                parse(&["decide", "auth", action, "--check"]).is_err(),
-                "{action} has nothing to check"
+                parse(&["decide", "auth", action, "--no-check"]).is_err(),
+                "{action} makes no call to be told not to make"
             );
         }
     }

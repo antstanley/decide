@@ -147,34 +147,32 @@ fn auth_at<In: Read, Out: Write, Err: Write>(
                 note(&mut io.stderr, "there was no stored token")
             }
         }
-        AuthCommand::Status { check } => {
+        AuthCommand::Status { no_check } => {
             let resolved = config::resolve(
                 environment.map(str::to_string),
                 global.api_key_file.as_deref(),
                 Some(path),
             );
-            match resolved {
-                Ok((source, key)) if *check => {
-                    check_credential(&source, key, global, io)?;
-                    emit(
-                        &mut io.stdout,
-                        &format!("{}: the API accepted it", source.describe()),
-                    )
-                }
-                Ok((source, _)) => emit(&mut io.stdout, &source.describe()),
-                // Nothing configured is a fact to report rather than a failure to raise, so
-                // `status` alone says so and succeeds. `--check` has nothing to check, which
-                // is the missing-credential error every other subcommand would raise.
-                Err(DecideError::MissingApiKey) if !*check => emit(
-                    &mut io.stdout,
-                    &format!(
-                        "no credential is configured; `decide auth set` would store one in \
-                         \"{}\"",
-                        path.display()
-                    ),
-                ),
-                Err(other) => Err(other),
+            // There is nothing to exercise and nothing to describe, so this is the
+            // missing-credential error every other subcommand would raise — with the path
+            // the store would use, which is the one thing this command knows that the
+            // others do not.
+            let (source, api_key) = resolved.map_err(|error| match error {
+                DecideError::MissingApiKey => DecideError::NoCredentialConfigured {
+                    path: path.to_path_buf(),
+                },
+                other => other,
+            })?;
+
+            if *no_check {
+                return emit(&mut io.stdout, &source.describe());
             }
+
+            check_credential(api_key, global, io)?;
+            emit(
+                &mut io.stdout,
+                &format!("{}: the API accepted the key", source.describe()),
+            )
         }
     }
 }
@@ -336,7 +334,6 @@ fn prepare<In: Read>(command: &Command, stdin: &mut Stdin<In>) -> Result<Prepare
 /// and the body are the ones a caller already knows how to read — and a `200` that is not
 /// the API's answer (a proxy, a captive portal) is not an acceptance either.
 fn check_credential<In: Read, Out: Write, Err: Write>(
-    _source: &config::Source,
     api_key: String,
     global: &GlobalArgs,
     io: &mut Io<In, Out, Err>,
@@ -623,7 +620,7 @@ mod tests {
         let (_dir, path) = store_path();
         config::store_at(&path, "sekrit-token").expect("writable");
 
-        let outcome = auth(&AuthCommand::Status { check: false }, &path, "", true);
+        let outcome = auth(&AuthCommand::Status { no_check: true }, &path, "", true);
 
         assert!(outcome.result.is_ok(), "{:?}", outcome.result);
         assert!(
@@ -640,7 +637,7 @@ mod tests {
         config::store_at(&path, "stored-token").expect("writable");
 
         let outcome = auth_with(
-            &AuthCommand::Status { check: false },
+            &AuthCommand::Status { no_check: true },
             &path,
             "",
             true,
@@ -655,21 +652,18 @@ mod tests {
     }
 
     #[test]
-    fn auth_status_check_without_a_credential_is_the_missing_key_error() {
+    fn auth_status_with_nothing_configured_has_nothing_to_check() {
         let (_dir, path) = store_path();
 
-        let outcome = auth(&AuthCommand::Status { check: true }, &path, "", true);
+        let outcome = auth(&AuthCommand::Status { no_check: false }, &path, "", true);
 
         let error = outcome.result.expect_err("there is nothing to check");
         assert_eq!(error.exit_code(), 2);
-        assert!(
-            outcome.stdout.is_empty(),
-            "a failed run leaves stdout empty, even for `status`"
-        );
+        assert!(outcome.stdout.is_empty());
     }
 
     #[test]
-    fn auth_status_check_reports_a_credential_it_cannot_exercise() {
+    fn auth_status_reports_a_credential_it_cannot_exercise() {
         let (_dir, path) = store_path();
         config::store_at(&path, "stored-token").expect("writable");
         // Nothing is listening on port 9, so the check cannot be made.
@@ -684,7 +678,7 @@ mod tests {
         };
         let mut typed = Typed("typed-at-the-prompt");
         let result = auth_at(
-            &AuthCommand::Status { check: true },
+            &AuthCommand::Status { no_check: false },
             &path,
             None,
             &mut typed,
@@ -703,7 +697,7 @@ mod tests {
     }
 
     #[test]
-    fn auth_status_without_check_never_leaves_the_machine() {
+    fn auth_status_no_check_never_leaves_the_machine() {
         let (_dir, path) = store_path();
         config::store_at(&path, "stored-token").expect("writable");
         let mut global = plain_global();
@@ -717,7 +711,7 @@ mod tests {
         };
         let mut typed = Typed("typed-at-the-prompt");
         let result = auth_at(
-            &AuthCommand::Status { check: false },
+            &AuthCommand::Status { no_check: true },
             &path,
             None,
             &mut typed,
@@ -735,22 +729,21 @@ mod tests {
     }
 
     #[test]
-    fn auth_status_reports_nothing_configured_rather_than_failing() {
+    fn auth_status_with_nothing_configured_says_so_and_names_the_store() {
         let (_dir, path) = store_path();
 
-        let outcome = auth(&AuthCommand::Status { check: false }, &path, "", true);
+        let outcome = auth(&AuthCommand::Status { no_check: true }, &path, "", true);
 
-        assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+        let error = outcome.result.expect_err("there is nothing to report on");
+        assert_eq!(error.exit_code(), 2);
+        assert!(outcome.stdout.is_empty());
+        let rendered = error.to_string();
         assert!(
-            outcome.stdout.contains("no credential"),
-            "{}",
-            outcome.stdout
+            rendered.contains("no credential is configured"),
+            "{rendered}"
         );
-        assert!(
-            outcome.stdout.contains("decide auth set"),
-            "{}",
-            outcome.stdout
-        );
+        assert!(rendered.contains("decide auth set"), "{rendered}");
+        assert!(rendered.contains(&path.display().to_string()), "{rendered}");
     }
 
     #[test]

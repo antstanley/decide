@@ -37,10 +37,10 @@ $ decide auth set
 TYPESAFE API token (it will not be echoed): 
 stored the token in "/home/you/.config/decide/api-key"
 
-$ decide auth status        # which source supplies the credential, never the value
+$ decide auth status        # where the credential comes from, and whether it works
+the credential stored at "/home/you/.config/decide/api-key": the API accepted the key
+$ decide auth status --no-check   # the local half only: no network needed
 the credential stored at "/home/you/.config/decide/api-key"
-$ decide auth status --check   # and does the API accept it?
-the credential stored at "/home/you/.config/decide/api-key": the API accepted it
 $ decide auth unset         # forget it again
 ```
 
@@ -68,14 +68,16 @@ The environment is first so that a script or a CI runner can override what is st
 one call. `TYPESAFE_DEFAULT_MODEL` names the model when neither `--model` nor the request
 document does.
 
-`auth status` on its own touches nothing outside the machine — it is the first thing to run
-when a call has already failed. `--check` adds one `GET /v1/models` with the credential that
-was found, which needs the network but spends no tokens, and fails with the API's own `401`
-when the key is wrong:
+`auth status` makes one `GET /v1/models` with the credential it found: it needs the
+network, it spends no tokens, and it fails with the API's own `401` when the key is wrong —
+so it is the check to run in CI before a pipeline that cannot work without a key:
 
 ```sh
-decide auth status --check || exit 1
+decide auth status || exit 1
 ```
+
+`--no-check` answers the local half only — which source, and where — which needs no network
+and no valid key.
 
 ## The two shapes
 

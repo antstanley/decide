@@ -459,29 +459,35 @@ disagreement, and the only safe response is to stop.
 The same rule covers `--base-url`, `--timeout`, `--retries`, `--backoff-ms`, and
 `--api-key-file`: knobs override, meaning conflicts.
 
-### D18. `auth status` is local; `--check` is the one that calls
+### D18. `auth status` answers both halves of the question, and dials to do it
 
-`decide auth status` answers "where does the credential come from" without touching the
-network. That is the command a caller runs when a call has *already* failed, and a
-diagnostic that needs the thing it is diagnosing is not much of a diagnostic.
-
-`--check` adds the other half of the question — whether the API accepts the key — as an
-opt-in, because it changes both what the command needs (a network, a timeout, a retry
-policy) and what it can do (fail in ways that have nothing to do with the credential).
+`decide auth status` reports where the credential comes from **and** whether the API accepts
+it. The two are one question — "can this machine call the API?" — and answering only the
+first leaves the caller to make a second command for the second half, which is how a
+diagnostic turns into a script.
 
 The call is `GET /v1/models`. It needs the same bearer token, and unlike an evaluation it
 spends no tokens, which is what makes it cheap enough to run after every `auth set`. A key
 the API refuses is left as the `401` the rest of the program already reports, so the exit
-code, the reason phrase, and the body are the ones a caller has read before, and
-`decide auth status --check || exit 1` is the whole script. A `200` that is not the API's
-answer — a proxy, a captive portal — is not an acceptance, because the check parses the
-body.
+code, the reason phrase, and the body are ones a caller has read before:
+`decide auth status || exit 1` is the whole script. A `200` that is not the API's answer —
+a proxy, a captive portal — is not an acceptance, because the check parses the body. With no
+credential, there is nothing to exercise and nothing to describe, so the command ends the
+way every other one does when the credential is missing: exit `2`, naming the three ways in
+and the path the store would use.
 
-*Rejected:* checking on every `auth status`. It would make a local command depend on a
-network and a clock, and it would break the property the suite is built on: that `status` is
-a question about this machine. *Rejected:* checking with the evaluation endpoint, which
-answers the same question for the price of a state, a question, and the tokens the two cost.
-*Rejected:* a separate `auth check` action, which reads as two questions where there is one.
+The cost of the default is that `status` now needs a network, and can fail for reasons that
+have nothing to do with the credential. `--no-check` is the way back: it answers the local
+half, which is the question to ask when the API itself is what is in doubt, and it is what
+keeps the command usable on a machine with no route out.
+
+*Rejected:* leaving the call opt-in, which makes the common case two commands and leaves the
+usual failure — a key that is present and wrong — to be discovered by the first real
+request. *Rejected:* checking with the evaluation endpoint, which answers the same question
+for the price of a state, a question, and the tokens the two cost. *Rejected:* a separate
+`auth check` action, which reads as two questions where there is one. *Rejected:* reporting
+"no credential is configured" as a success on stdout, which hides from a script the one fact
+it needs to branch on.
 
 ## The module map
 

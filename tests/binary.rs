@@ -190,7 +190,7 @@ fn a_stored_token_is_used_when_the_environment_has_none() {
 }
 
 #[test]
-fn auth_status_check_exercises_the_stored_key() {
+fn auth_status_exercises_the_stored_key() {
     let server = FakeServer::start(vec![Reply::json(include_str!("data/models.json"))]);
     let home = tempfile::tempdir().expect("a temporary home");
     assert_eq!(
@@ -203,14 +203,14 @@ fn auth_status_check_exercises_the_stored_key() {
     );
 
     let checked = decide_in_home(
-        &["auth", "status", "--check", "--base-url", &server.url()],
+        &["auth", "status", "--base-url", &server.url()],
         home.path(),
         "",
     );
 
     assert_eq!(code(&checked), 0, "stderr: {}", text(&checked.stderr));
     assert!(
-        text(&checked.stdout).contains("the API accepted it"),
+        text(&checked.stdout).contains("the API accepted the key"),
         "{}",
         text(&checked.stdout)
     );
@@ -227,22 +227,19 @@ fn auth_status_check_exercises_the_stored_key() {
 fn auth_status_reports_where_the_credential_comes_from_without_printing_it() {
     let home = tempfile::tempdir().expect("a temporary home");
 
-    let empty = decide_in_home(&["auth", "status"], home.path(), "");
-    assert_eq!(
-        code(&empty),
-        0,
-        "nothing configured is a fact, not a failure"
-    );
-    assert!(
-        text(&empty.stdout).contains("no credential"),
-        "{}",
-        text(&empty.stdout)
-    );
+    // Nothing configured: status says so, names the store it would use, and stops.
+    let empty = decide_in_home(&["auth", "status", "--no-check"], home.path(), "");
+    assert_eq!(code(&empty), 2);
+    assert!(empty.stdout.is_empty(), "a failed run leaves stdout empty");
+    let stderr = text(&empty.stderr);
+    assert!(stderr.contains("no credential is configured"), "{stderr}");
+    assert!(stderr.contains("api-key"), "it names the store: {stderr}");
 
     let stored = decide_in_home(&["auth", "set"], home.path(), "sekrit-token\n");
     assert_eq!(code(&stored), 0);
 
-    let status = decide_in_home(&["auth", "status"], home.path(), "");
+    // --no-check is the local question, so it needs no server to answer it.
+    let status = decide_in_home(&["auth", "status", "--no-check"], home.path(), "");
     assert_eq!(code(&status), 0);
     let stdout = text(&status.stdout);
     assert!(stdout.contains("api-key"), "{stdout}");
@@ -269,11 +266,12 @@ fn auth_unset_forgets_the_stored_token() {
         0
     );
 
-    let status = decide_in_home(&["auth", "status"], home.path(), "");
+    let status = decide_in_home(&["auth", "status", "--no-check"], home.path(), "");
+    assert_eq!(code(&status), 2, "there is nothing left to report on");
     assert!(
-        text(&status.stdout).contains("no credential"),
+        text(&status.stderr).contains("no credential is configured"),
         "{}",
-        text(&status.stdout)
+        text(&status.stderr)
     );
 }
 

@@ -525,7 +525,7 @@ fn models_is_printed_whole_and_can_be_selected_from() {
 }
 
 #[test]
-fn auth_status_check_says_that_the_api_accepted_the_key() {
+fn auth_status_says_that_the_api_accepted_the_key() {
     let server = FakeServer::start(vec![Reply::json(MODELS)]);
     let (_key, key) = key_file();
 
@@ -534,7 +534,6 @@ fn auth_status_check_says_that_the_api_accepted_the_key() {
             "decide",
             "auth",
             "status",
-            "--check",
             "--base-url",
             &server.url(),
             "--api-key-file",
@@ -546,7 +545,7 @@ fn auth_status_check_says_that_the_api_accepted_the_key() {
 
     assert!(outcome.result.is_ok(), "{:?}", outcome.result);
     assert!(
-        outcome.stdout.contains("the API accepted it"),
+        outcome.stdout.contains("the API accepted the key"),
         "{}",
         outcome.stdout
     );
@@ -561,7 +560,7 @@ fn auth_status_check_says_that_the_api_accepted_the_key() {
 }
 
 #[test]
-fn auth_status_check_reports_a_key_the_api_refuses() {
+fn auth_status_reports_a_key_the_api_refuses() {
     let server = FakeServer::start(vec![Reply::status(401, r#"{"error":"invalid key"}"#)]);
     let (_key, key) = key_file();
 
@@ -570,7 +569,6 @@ fn auth_status_check_reports_a_key_the_api_refuses() {
             "decide",
             "auth",
             "status",
-            "--check",
             "--base-url",
             &server.url(),
             "--api-key-file",
@@ -592,7 +590,7 @@ fn auth_status_check_reports_a_key_the_api_refuses() {
 }
 
 #[test]
-fn auth_status_check_does_not_accept_an_answer_that_is_not_the_apis() {
+fn auth_status_does_not_accept_an_answer_that_is_not_the_apis() {
     let server = FakeServer::start(vec![Reply::json("<html>a captive portal</html>")]);
     let (_key, key) = key_file();
 
@@ -601,7 +599,6 @@ fn auth_status_check_does_not_accept_an_answer_that_is_not_the_apis() {
             "decide",
             "auth",
             "status",
-            "--check",
             "--base-url",
             &server.url(),
             "--api-key-file",
@@ -619,7 +616,7 @@ fn auth_status_check_does_not_accept_an_answer_that_is_not_the_apis() {
 }
 
 #[test]
-fn auth_status_without_check_makes_no_call() {
+fn auth_status_no_check_makes_no_call() {
     // A server that would answer `500` loudly if anything asked it anything.
     let server = FakeServer::start(vec![Reply::status(500, "should not be called")]);
     let (_key, key) = key_file();
@@ -629,6 +626,7 @@ fn auth_status_without_check_makes_no_call() {
             "decide",
             "auth",
             "status",
+            "--no-check",
             "--base-url",
             &server.url(),
             "--api-key-file",
@@ -639,7 +637,7 @@ fn auth_status_without_check_makes_no_call() {
     );
 
     assert!(outcome.result.is_ok(), "{:?}", outcome.result);
-    assert_eq!(server.count(), 0, "status alone never leaves the machine");
+    assert_eq!(server.count(), 0, "--no-check never leaves the machine");
     assert!(outcome.stdout.contains("api-key"), "{}", outcome.stdout);
 }
 

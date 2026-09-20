@@ -268,10 +268,11 @@ claims live in `tests/run.rs` and `tests/binary.rs`.
   SIGINT *after* restoring. Verified through a real pty once (token not echoed, Ctrl-C exits
   by SIGINT with nothing stored); the suite does not assert it, because a pseudo-terminal is
   one thing `std` does not have and a pty crate for one assertion is not worth the manifest.
-- **`auth status` is local; `auth status --check` is the one that calls.** The check is
-  `GET /v1/models` because it needs the same token and spends no tokens; it refuses a `200`
-  that is not the API's answer, and it lets a refused key travel as the ordinary `401`
-  status path so the exit code needs no new case.
+- **`auth status` dials; `--no-check` is the local mode.** The call is `GET /v1/models`
+  because it needs the same token and spends no tokens; it refuses a `200` that is not the
+  API's answer, and it lets a refused key travel as the ordinary `401` status path so the
+  exit code needs no new case. With no credential it ends in `NoCredentialConfigured`
+  (exit `2`), which is the missing-key error plus the path the store would use.
 - **The one file `decide` writes is the credential, not a config file.** It is a token in a
   file — not parsed, not merged, mode 0600 — and adding a second key to it is the point at
   which [D13](docs/design.md#d13-one-credential-store-and-still-no-configuration-file)'s

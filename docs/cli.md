@@ -337,8 +337,8 @@ flags and none of the evaluation flags: there is no state to send and no body to
 | Action | Does |
 |---|---|
 | `auth set` | asks for a token when a person is running it, reads a pipe when a script is, and stores it readable only by its owner |
-| `auth status` | prints which source supplies the credential, and never the value |
-| `auth status --check` | the same, plus one call that asks the API whether it accepts the key |
+| `auth status` | names the source that supplies the credential — never the value — and asks the API whether it accepts the key |
+| `auth status --no-check` | names the source and stops there: no network, no valid key needed |
 | `auth unset` | removes the stored token |
 
 ```console
@@ -350,10 +350,10 @@ $ printf %s "$TOKEN" | decide auth set          # a script, which has no termina
 stored the token in "/home/you/.config/decide/api-key"
 
 $ decide auth status
-TYPESAFE_API_KEY
+TYPESAFE_API_KEY: the API accepted the key
 
-$ decide auth status --check
-TYPESAFE_API_KEY: the API accepted it
+$ decide auth status --no-check          # the local half of the question
+TYPESAFE_API_KEY
 ```
 
 The token is typed at a prompt, which does not echo it, or read from a **pipe** when stdin
@@ -365,30 +365,33 @@ terminal would have echoed after the return key is written there too, so the nex
 output starts where it should.
 
 `set` and `unset` confirm on stderr and write nothing to stdout, because they are actions;
-`status` prints its one line on stdout, because it is a question. `status` is exit `0` even
-when nothing is configured — that is the fact it was asked for — and names the path a store
-would use. It reports an unreadable `--api-key-file` as the error it is, rather than
-claiming there is no credential.
+`status` prints its one line on stdout, because it is a question.
 
-`--check` adds the other half of the question: whether the API accepts the key. Without it
-`status` touches nothing outside this machine, which is what makes it the first thing to run
-when a call has already failed. With it, one `GET /v1/models` is made with the credential
-that was found — the same bearer token, and unlike an evaluation it spends no tokens, so it
-is cheap enough to run after every `auth set`. `--timeout`, `--retries`, and `--backoff-ms`
-apply to it as they do to any call.
+`status` asks both halves of it: where the credential comes from, and whether the API
+accepts it. The second half is one `GET /v1/models` with the credential that was found —
+the same bearer token, and unlike an evaluation it spends no tokens, so it is cheap enough
+to run after every `auth set`. `--timeout`, `--retries`, and `--backoff-ms` apply to it as
+they do to any call, and `--verbose` shows it.
 
-The verdict goes on stdout after the source, and the exit code is the call's: `0` when the
-API accepted the key, `1` when it refused it — a `401` is reported as the `401` it is, with
-the status and the body, exactly as any other call reports one — or when the check could not
-be made at all (a transport failure, a `5xx` after the retries, a `200` that is not the
-API's answer). So the script is the one a caller already knows:
+The verdict goes on stdout after the source, and the exit code is the call's:
+
+| Outcome | Code | Where |
+|---|---|---|
+| the API accepted the key | `0` | stdout: the source, then `the API accepted the key` |
+| the API refused it | `1` | stderr: the `401`, its reason phrase, and its body, as any other call reports one |
+| the call could not be made | `1` | stderr: the transport failure and the attempt count, or the status that came back — including a `200` that is not the API's answer |
+| no credential is configured | `2` | stderr: the three ways to supply one, and the path the store would use |
+
+so the script is the one a caller already knows:
 
 ```sh
-decide auth status --check || exit 1
+decide auth status || exit 1
 ```
 
-With no credential to check, `--check` is the missing-credential error: exit `2`, an empty
-stdout, and the same message every other subcommand gives.
+`--no-check` drops the call and answers the local half only. It needs no network and no
+valid key, which is the question to ask when the API itself is what is in doubt — and the
+one `status` asked before it learned to dial. An unreadable `--api-key-file` is still
+reported as the error it is rather than as a missing credential.
 
 ## Flags
 

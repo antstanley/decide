@@ -23,6 +23,17 @@ pub enum DecideError {
     )]
     MissingApiKey,
 
+    /// `decide auth status` found no credential to report on.
+    #[error(
+        "no credential is configured: set TYPESAFE_API_KEY, name a file with --api-key-file, \
+         or run `decide auth set`, which would store one at \"{}\"",
+        path.display()
+    )]
+    NoCredentialConfigured {
+        /// The path a stored credential would have.
+        path: PathBuf,
+    },
+
     /// There is no directory to keep a stored credential in.
     #[error(
         "cannot tell where to keep the credential: neither XDG_CONFIG_HOME nor HOME is set, \
@@ -259,6 +270,7 @@ impl DecideError {
     pub const fn exit_code(&self) -> u8 {
         match self {
             Self::MissingApiKey
+            | Self::NoCredentialConfigured { .. }
             | Self::NoCredentialStore
             | Self::CredentialUnreadable { .. }
             | Self::CredentialUnwritable { .. }
