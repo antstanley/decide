@@ -126,6 +126,15 @@ fn auth_at<In: Read, Out: Write, Err: Write>(
     global: &GlobalArgs,
     io: &mut Io<In, Out, Err>,
 ) -> Result<(), DecideError> {
+    // `--select` and `--pretty` are global because every subcommand that prints a response
+    // has one to shape. `auth` prints a line, so they would be accepted and ignored — the
+    // shape the design refuses, and the shape that gives a caller something other than what
+    // it asked for. clap cannot un-inherit a global argument, so they are refused here by
+    // name, at the narrowest site.
+    if let Some(flag) = global.unused_output_flag() {
+        return Err(DecideError::NothingToShape { flag });
+    }
+
     match command {
         AuthCommand::Set => {
             let token = config::read_token(&mut io.stdin, &mut io.stderr, secret)?;
@@ -419,6 +428,23 @@ fn render_response(
     Ok(report::render_json(&response.value, global.pretty))
 }
 
+impl GlobalArgs {
+    /// The output flag this crate's `auth` subcommand would have to ignore, if one was given.
+    ///
+    /// A method rather than a free function so that the two flags and the place they are
+    /// refused stay next to each other; `cli` owns the flags, `lib` owns what to do with
+    /// them.
+    fn unused_output_flag(&self) -> Option<&'static str> {
+        if self.select.is_some() {
+            return Some("select");
+        }
+        if self.pretty {
+            return Some("pretty");
+        }
+        None
+    }
+}
+
 /// Write one diagnostic line, which never changes stdout.
 fn note<Err: Write>(err: &mut Err, text: &str) -> Result<(), DecideError> {
     writeln!(err, "{text}")
@@ -663,6 +689,48 @@ mod tests {
         assert!(!outcome.stdout.contains(&path.display().to_string()));
         assert!(!outcome.stdout.contains("env-token"), "never the value");
         assert!(!outcome.stdout.contains("stored-token"), "never the value");
+    }
+
+    #[test]
+    fn auth_refuses_the_flags_that_shape_a_response() {
+        let (_dir, path) = store_path();
+        config::store_at(&path, "sekrit-token").expect("writable");
+        let mut io = Io {
+            stdin: Stdin::new(Cursor::new(Vec::new()), true),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        let mut typed = Typed("typed-at-the-prompt");
+
+        for (flag, global) in [
+            (
+                "--select",
+                GlobalArgs {
+                    select: Some("model".to_string()),
+                    ..plain_global()
+                },
+            ),
+            (
+                "--pretty",
+                GlobalArgs {
+                    pretty: true,
+                    ..plain_global()
+                },
+            ),
+        ] {
+            let result = auth_at(
+                &AuthCommand::Status { no_check: true },
+                &path,
+                None,
+                &mut typed,
+                &global,
+                &mut io,
+            );
+            let error = result.expect_err("auth has no response to shape");
+            assert_eq!(error.exit_code(), 2);
+            assert!(error.to_string().contains(flag), "{error}");
+            assert!(io.stdout.is_empty(), "a failed run leaves stdout empty");
+        }
     }
 
     #[test]

@@ -268,6 +268,13 @@ claims live in `tests/run.rs` and `tests/binary.rs`.
   SIGINT *after* restoring. Verified through a real pty once (token not echoed, Ctrl-C exits
   by SIGINT with nothing stored); the suite does not assert it, because a pseudo-terminal is
   one thing `std` does not have and a pty crate for one assertion is not worth the manifest.
+- **Two global flags cannot act in `auth`, and are refused there by name.** `--select` and
+  `--pretty` shape a response; `auth` prints a line. clap cannot un-inherit a global
+  argument, so `auth_at` refuses them (`DecideError::NothingToShape`, exit `2`) rather than
+  accepting and ignoring them — and `--verbose` is pointedly not in that list, because the
+  check does make a call and progress is worth reporting.
+- **A scheme is matched case-insensitively.** `HTTPS://host` is a URL with a scheme, and the
+  error for `HTTPS://…` says the opposite if it is not handled that way.
 - **`auth status` dials; `--no-check` is the local mode.** The call is `GET /v1/models`
   because it needs the same token and spends no tokens; it refuses a `200` that is not the
   API's answer, and it lets a refused key travel as the ordinary `401` status path so the

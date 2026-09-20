@@ -227,10 +227,7 @@ const ENDPOINT_PATH: &str = "/v1/systemone";
 /// never appended twice and `GET /v1/models` stays a sibling of the POST.
 pub fn resolve_base_url(raw: &str) -> Result<String, DecideError> {
     let trimmed = raw.trim_end_matches('/');
-    let host = trimmed
-        .strip_prefix("https://")
-        .or_else(|| trimmed.strip_prefix("http://"));
-    match host {
+    match after_scheme(trimmed) {
         Some(host) if !host.is_empty() => {
             let root = trimmed.strip_suffix(ENDPOINT_PATH).unwrap_or(trimmed);
             Ok(root.trim_end_matches('/').to_string())
@@ -239,6 +236,23 @@ pub fn resolve_base_url(raw: &str) -> Result<String, DecideError> {
             url: raw.to_string(),
         }),
     }
+}
+
+/// The part of a URL after its scheme, if it has one.
+///
+/// Matched without regard to case, because RFC 3986 says a scheme is case-insensitive and
+/// because the alternative is an error that contradicts the URL it is quoting: `HTTPS://…`
+/// does have a scheme, and `--base-url HTTPS://… has no scheme` reads as a lie.
+fn after_scheme(url: &str) -> Option<&str> {
+    for prefix in ["https://", "http://"] {
+        if url
+            .get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        {
+            return url.get(prefix.len()..);
+        }
+    }
+    None
 }
 
 /// Read the request document for `ask`, and say whether stdin was consumed by it.
@@ -716,6 +730,25 @@ mod tests {
             "https://api.typesafe.ai",
             "a trailing slash is trimmed before the path is recognised"
         );
+    }
+
+    #[test]
+    fn a_scheme_is_recognised_however_it_is_cased() {
+        // RFC 3986 says the scheme is case-insensitive, and the error message says the URL
+        // has no scheme, so refusing `HTTPS://…` would be a message that contradicts itself.
+        assert_eq!(
+            resolve_base_url("HTTPS://api.typesafe.ai").expect("that has a scheme"),
+            "HTTPS://api.typesafe.ai"
+        );
+        assert_eq!(
+            resolve_base_url("Http://127.0.0.1:8080/v1/systemone").expect("that has a scheme"),
+            "Http://127.0.0.1:8080"
+        );
+
+        // And a string that merely starts with the letters is still not a URL.
+        assert!(resolve_base_url("https//api.typesafe.ai").is_err());
+        assert!(resolve_base_url("https:/api.typesafe.ai").is_err());
+        assert!(resolve_base_url("http//api.typesafe.ai").is_err());
     }
 
     #[test]

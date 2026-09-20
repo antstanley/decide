@@ -164,6 +164,7 @@ Every row is a test that exists with both halves.
 | stdout is the response | The exact bytes, compact and pretty | A failed run leaves stdout empty; `--verbose` does not change stdout |
 | A selected value is a usable value | `--select` into an object, an array, a number, a bool; `--value`; `--field confidence` | A path that misses names the segment and the available keys; `--value` on a three-question request is refused; `--value` and `--field` together are refused |
 | A credential is found without an environment variable | Each of the three sources alone, in that order; a stored token used by a real call through the built binary | No source at all; a named file that cannot be read; `auth set` with an empty pipe and with nothing typed; `auth status` never printing the value |
+| The dry run is the request | The bytes printed equal the bytes the fake server received, for the same invocation | A dry run makes no call at all; a request whose body differs by a byte fails the comparison |
 | The key can be exercised without being printed | `auth status` reads `/v1/models` with the credential and says the API accepted the key, end to end through the built binary | A `401` is the status error it is; a `200` whose body is JSON but not a models list is refused, and so is an empty one; a call that cannot be made reports the attempt count; no credential is exit `2` naming the store; `--no-check` makes no call at all; `models` still prints a body it does not recognise |
 | A secret never reaches a stream we did not hand out | The prompt goes to stderr, a terminal reads the secret and writes no prompt, and the file is 0600 | A read that fails is refused by name; a typed token keeps its own whitespace; the token is absent from stdout, stderr, and the confirmation |
 | The help is the interface | The block in [`cli.md`](cli.md#help-text), compared with what the binary prints; every flag present in `--help` and absent where it could not act | A description column that moved; `--api-key` parsed as a flag; an evaluation flag accepted by `models` or `auth` |
@@ -206,6 +207,7 @@ config::a_terminal_is_prompted_and_the_prompt_goes_to_stderr;
 config::a_terminal_read_that_fails_is_refused_by_name;
 config::an_empty_token_is_refused_whichever_way_it_arrived;
 input::both_spellings_of_the_endpoint_reduce_to_the_same_root;
+input::a_scheme_is_recognised_however_it_is_cased;
 cli::auth_takes_no_credential_flag_either;
 
 report::a_string_value_is_printed_without_quotes;

@@ -388,6 +388,11 @@ so the script is the one a caller already knows:
 decide auth status || exit 1
 ```
 
+`--select` and `--pretty` are refused here by name rather than ignored
+([the rule](#flags) and [D18](design.md#d18-auth-status-answers-both-halves-of-the-question-and-dials-to-do-it)):
+`auth` prints a line, not a response, so neither has anything to act on. `--base-url` is not
+validated when nothing is called, which is the same as `--dry-run`.
+
 `--no-check` drops the call and answers the local half only. It needs no network and no
 valid key, which is the question to ask when the API itself is what is in doubt — and the
 one `status` asked before it learned to dial. An unreadable `--api-key-file` is still
@@ -401,11 +406,17 @@ needs a request body; `models` has neither, so they are defined only where they 
 something. A flag that could not do anything is not accepted and quietly ignored — it is
 not accepted at all, which is the same rule the state follows.
 
+There is one flag where the rule cannot be applied by the parser: `--select` and `--pretty`
+are inherited by every subcommand, and `auth` prints a line about the credential rather than
+a response, so there is nothing for them to shape. clap cannot un-inherit a global argument,
+so `auth` refuses them itself, by name — exit `2`, with a message that says which flag and
+why. `--verbose` is not refused: `auth status` makes a call, and there is progress to report.
+
 ### Global
 
 | Flag | Default | Environment | Notes |
 |---|---|---|---|
-| `--base-url URL` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_BASE_URL` | Must begin with `http://` or `https://`. Both the API root and the full `/v1/systemone` endpoint are accepted — the default is the endpoint, because that is the URL the API documentation shows — and either reduces to the root, so `/v1/systemone` is never appended twice and `GET /v1/models` stays a sibling of the `POST`. A trailing `/` is trimmed. |
+| `--base-url URL` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_BASE_URL` | Must begin with `http://` or `https://` — matched without regard to case, because a scheme is case-insensitive and an error that says `HTTPS://…` has no scheme is a lie. Both the API root and the full `/v1/systemone` endpoint are accepted — the default is the endpoint, because that is the URL the API documentation shows — and either reduces to the root, so `/v1/systemone` is never appended twice and `GET /v1/models` stays a sibling of the `POST`. A trailing `/` is trimmed. |
 | `--api-key-file PATH` | — | `TYPESAFE_API_KEY_FILE` | The key, read from a file. One trailing newline is stripped, so a file written by `echo` works. |
 | `--timeout SECONDS` | `60` | — | Bounds **one attempt**. Must be at least 1; `0` is refused rather than meaning "forever". The worst case for a call is `(1 + --retries) × --timeout`. |
 | `--retries N` | `2` | — | At most 10. `--retries 0` makes the call a single attempt. |

@@ -484,9 +484,21 @@ have nothing to do with the credential. `--no-check` is the way back: it answers
 half, which is the question to ask when the API itself is what is in doubt, and it is what
 keeps the command usable on a machine with no route out.
 
-*Rejected:* leaving the call opt-in, which makes the common case two commands and leaves the
-usual failure — a key that is present and wrong — to be discovered by the first real
-request. *Rejected:* checking with the evaluation endpoint, which answers the same question
+`--select` and `--pretty` are global, and `auth` prints a line rather than a response, so
+both are refused by that subcommand, by name, at exit `2`. The rule the rest of the interface
+follows is stronger — a flag that cannot act is not *accepted* — and clap cannot un-inherit a
+global argument, so the refusal is the same rule enforced a step later, where the message can
+still name the flag. `--verbose` is deliberately not refused: the check makes a call, and
+there is progress to report.
+
+*Rejected:* leaving either flag accepted and ignored, which gives a caller piping
+`--select usage.x` something other than what it asked for. *Rejected:* making `--select` and
+`--pretty` local to the subcommands that print a response, which is what the criterion above
+implies — it would break `decide --select model noul …`, the spelling shown in
+[`cli.md`](cli.md#output) and in scripts already written against it, for a flag placement
+rather than a behaviour. *Rejected:* leaving the call opt-in, which makes the common case two
+commands and leaves the usual failure — a key that is present and wrong — to be discovered by
+the first real request. *Rejected:* checking with the evaluation endpoint, which answers the same question
 for the price of a state, a question, and the tokens the two cost. *Rejected:* a separate
 `auth check` action, which reads as two questions where there is one. *Rejected:* reporting
 "no credential is configured" as a success on stdout, which hides from a script the one fact

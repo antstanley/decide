@@ -704,6 +704,55 @@ fn models_still_prints_a_body_it_does_not_recognise() {
 }
 
 #[test]
+fn a_dry_run_is_the_bytes_a_real_call_puts_on_the_wire() {
+    // cli.md claims the printed request is byte-identical to what a real call would send.
+    // The two paths share a rendering function, so this holds by construction — but a
+    // construction is not an observation, and this compares the dry run's stdout with the
+    // bytes the server actually received.
+    // The reply answers the question this invocation asks, which is keyed `urgency`.
+    let server = FakeServer::start(vec![Reply::json(
+        r#"{"model":"jev-1.13.0","answers":{"urgency":{"type":"noul","noul":0.95}}}"#,
+    )]);
+    let (_key, key) = key_file();
+    let (_state_dir, state) = document("Help! My payouts have been failing.");
+    let url = server.url();
+    let base = [
+        "decide",
+        "noul",
+        "does this message convey urgency?",
+        "--state-file",
+        state.as_str(),
+        "--id",
+        "urgency",
+        "--yes",
+        "time-sensitive",
+        "--no",
+        "routine",
+        "--api-key-file",
+        key.as_str(),
+        "--base-url",
+        url.as_str(),
+    ];
+
+    let mut dry_args = base.to_vec();
+    dry_args.push("--dry-run");
+    let dry = run(&dry_args, "", true);
+
+    let real = run(&base, "", true);
+
+    assert!(dry.result.is_ok(), "{:?}", dry.result);
+    assert!(real.result.is_ok(), "{:?}", real.result);
+    assert_eq!(server.count(), 1, "the dry run made no call");
+    let seen = server.seen();
+    let request = seen.first().expect("one request was seen");
+    assert_eq!(
+        dry.stdout.trim_end_matches('\n'),
+        request.body,
+        "the printed request is the request"
+    );
+}
+
+#[test]
 fn auth_status_no_check_makes_no_call() {
     // A server that would answer `500` loudly if anything asked it anything.
     let server = FakeServer::start(vec![Reply::status(500, "should not be called")]);

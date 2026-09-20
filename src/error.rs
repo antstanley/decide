@@ -23,6 +23,16 @@ pub enum DecideError {
     )]
     MissingApiKey,
 
+    /// A flag that shapes a response was given to a subcommand that prints none.
+    #[error(
+        "--{flag} has nothing to act on here: `auth` prints a line about the credential, not \
+         a response to shape"
+    )]
+    NothingToShape {
+        /// The flag, without its dashes.
+        flag: &'static str,
+    },
+
     /// `decide auth status` found no credential to report on.
     #[error(
         "no credential is configured: set TYPESAFE_API_KEY, name a file with --api-key-file, \
@@ -270,6 +280,7 @@ impl DecideError {
     pub const fn exit_code(&self) -> u8 {
         match self {
             Self::MissingApiKey
+            | Self::NothingToShape { .. }
             | Self::NoCredentialConfigured { .. }
             | Self::NoCredentialStore
             | Self::CredentialUnreadable { .. }
