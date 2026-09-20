@@ -1,0 +1,191 @@
+name: release
+
+# Two phases, decided by what is in the tree rather than by a label or a manual step:
+#
+#   changesets pending  → a release pull request: the version and the changelog are reviewed
+#                         like any other change, and nothing is published yet
+#   nothing pending     → the version in Cargo.toml has no release yet, so publish it: build
+#                         the five targets and attach them to a GitHub release
+#
+# The asset names carry no version — the directory inside each archive does — because the
+# installer fetches `releases/latest/download/<asset>`, which cannot know the version without
+# asking the API, and an installer should not need a rate limit and a JSON parser.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  prepare:
+    name: prepare a release pull request
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.apply.outputs.version }}
+      applied: ${{ steps.apply.outputs.applied }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply the changesets
+        id: apply
+        shell: bash
+        run: |
+          set -eu
+          echo "applied=false" >>"$GITHUB_OUTPUT"
+          version=$(scripts/changesets.sh current)
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          if [ -z "$(scripts/changesets.sh pending)" ]; then
+            echo "no changesets pending"
+            exit 0
+          fi
+          version=$(scripts/changesets.sh apply)
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "applied=true" >>"$GITHUB_OUTPUT"
+          echo "prepared v$version"
+
+      - name: Open or update the release pull request
+        if: steps.apply.outputs.applied == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.apply.outputs.version }}
+        run: |
+          set -eu
+          branch="release/v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add --all
+          git commit -m "release: v$VERSION"
+          git push --force origin "$branch"
+          scripts/changesets.sh notes "$VERSION" >release-notes.md
+          if ! gh pr create --base main --head "$branch" \
+            --title "release: v$VERSION" \
+            --body-file release-notes.md; then
+            echo "a pull request for v$VERSION is already open, or the branch is unchanged"
+          fi
+
+  decide:
+    name: decide whether to publish
+    runs-on: ubuntu-latest
+    needs: prepare
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Is this push a release?
+        id: decide
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          version=$(scripts/changesets.sh current)
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          if [ -n "$(scripts/changesets.sh pending)" ]; then
+            echo "changesets are pending, so this push is a release pull request"
+            echo "publish=false" >>"$GITHUB_OUTPUT"
+          elif gh release view "v$version" >/dev/null 2>&1; then
+            echo "v$version is already published"
+            echo "publish=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "publishing v$version"
+            echo "publish=true" >>"$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: decide
+    if: needs.decide.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure a Rust toolchain
+        shell: bash
+        # The arm64 runners are newer than the rest of the fleet, so this does not assume
+        # the toolcache is there — it bootstraps rustup if it is not.
+        run: |
+          set -eu
+          if command -v rustup >/dev/null 2>&1; then
+            rustup show >/dev/null
+            exit 0
+          fi
+          case "$(uname -s)-$(uname -m)" in
+            Linux-aarch64)
+              url=https://static.rust-lang.org/rustup/dist/aarch64-unknown-linux-gnu/rustup-init ;;
+            MINGW*-aarch64 | MSYS*-aarch64 | CYGWIN*-aarch64)
+              url=https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe ;;
+            *)
+              echo "no rustup here and no bootstrap for $(uname -s)-$(uname -m)" >&2
+              exit 1 ;;
+          esac
+          curl -fsSLo rustup-init "$url"
+          chmod +x rustup-init 2>/dev/null || true
+          ./rustup-init -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+
+      - name: Add the target
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build and package
+        shell: bash
+        run: scripts/package.sh ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: publish the release
+    needs: [decide, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create the release and attach the assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.decide.outputs.version }}
+        run: |
+          set -eu
+          tag="v$VERSION"
+          scripts/changesets.sh notes "$VERSION" >release-notes.md
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --notes-file release-notes.md
+          gh release upload "$tag" dist/* --clobber
+          # The installer is an asset too, so a pinned version can install itself without
+          # running a script from a branch that has moved on.
+          gh release upload "$tag" install.sh --clobber
+          echo "published $tag:"
+          ls -1 dist

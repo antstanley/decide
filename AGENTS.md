@@ -115,6 +115,31 @@ cargo run -- choice "which team?" --no-state \
 network, and prints exactly the bytes that would be sent — which also makes it the quickest
 way to check a quoting problem in a shell.
 
+## Releasing
+
+A release is prepared from **change files**, not from a tag someone remembers to push. Every
+change that ships adds one to `.changeset/`; [`docs/release.md`](docs/release.md) is the
+process and [`.changeset/README.md`](.changeset/README.md) is the format, which is
+[the one Knope parses](https://github.com/knope-dev/changesets).
+
+```
+scripts/changesets.sh pending    # what is waiting to be released
+scripts/changesets.sh next       # the version it would produce
+scripts/changesets.sh apply      # bump Cargo.toml and Cargo.lock, write CHANGELOG.md
+scripts/changesets.sh notes V    # the release body for V
+```
+
+`.github/workflows/release.yml` runs those: changesets pending becomes a release pull
+request, and a push whose version has no release yet builds the five targets, creates the tag,
+and attaches the archives and `install.sh` to a GitHub release. Asset names carry no version
+(the directory inside each archive does), so `releases/latest/download/<asset>` resolves
+without asking the API for a tag.
+
+The scripts are POSIX sh, and **bash 3.2 cannot parse a `case` inside a `$( )`** — that is
+`/bin/sh` on macOS, and on GitHub's macOS runners. Keep `case` in a function and capture
+`$(f)`, never `$(case …)`. `tests/scripts.rs` runs both scripts, including the installer
+against a socket it owns, so a release does not rest on a reading of them.
+
 ## Conventions you must follow
 
 Tiger Style, enforced by `clippy -D warnings` rather than aspired to. The full lint set is

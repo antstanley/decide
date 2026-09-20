@@ -22,6 +22,31 @@ technical
 ## Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/antstanley/decide/main/install.sh | sh
+```
+
+The installer works out which build this machine needs, downloads it from the
+[latest release](https://github.com/antstanley/decide/releases/latest), checks it against the
+published SHA-256, and puts the binary in `~/.local/bin` (or `$DECIDE_INSTALL_DIR`). It
+refuses to install anything it cannot verify, and says what it cannot do rather than
+guessing — there is no macOS Intel build, and none for Windows under this script.
+
+Pin a version, or install somewhere else:
+
+```sh
+curl -fsSL https://github.com/antstanley/decide/releases/download/v0.1.0/install.sh | DECIDE_VERSION=0.1.0 sh
+DECIDE_INSTALL_DIR=/usr/local/bin … | sh
+```
+
+Or take the archive by hand from the release page: `decide-<target>.tar.gz` for
+`aarch64-apple-darwin`, `aarch64-unknown-linux-musl`, `x86_64-unknown-linux-musl`,
+`x86_64-pc-windows-msvc`, or `aarch64-pc-windows-msvc`. Each has a `.sha256` beside it. The
+Linux builds are static musl, so they run on any distribution; the Windows one extracts with
+`tar -xzf` in PowerShell, or 7-Zip.
+
+From source, which needs no credential and no network:
+
+```sh
 cargo build --release          # target/release/decide
 ```
 

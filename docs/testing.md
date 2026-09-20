@@ -81,6 +81,15 @@ environment variable, still sends the `Authorization` header.
 `tests/help.rs` is the same layer: it runs the binary and compares `--help` with the block
 in [`cli.md`](cli.md#help-text), which is the only way to hold the interface to the page.
 
+### 5. The release scripts (`scripts/`), through `tests/scripts.rs`
+
+The versioning script and the installer are programs a release depends on, so they are tested
+rather than read: the bump from a change file's type in every direction (including the
+malformed files, which must be refused with nothing computed), `apply` against a stubbed
+`cargo` so no toolchain or registry is needed, and the installer against an HTTP server the
+test opens — one case that installs, one that refuses a tampered archive, one that refuses an
+unknown platform. Nothing there touches the network.
+
 **One behaviour the suite does not assert: the interactive prompt.** Clearing the terminal's
 echo needs a pseudo-terminal, and `std` has none — a pty crate would be a dependency for one
 assertion. What is asserted is everything around it: that the prompt (and only the prompt)

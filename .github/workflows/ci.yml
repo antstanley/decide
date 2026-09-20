@@ -1,0 +1,42 @@
+name: ci
+
+# The five gates, on every push to main and every pull request. They are the same commands
+# AGENTS.md lists, run in the same order, so a green tick here means what it says there.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: the five gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-nextest
+        # Pinned and fetched, rather than a third-party action and rather than compiling it:
+        # the suite is the gate, so the runner for it is worth three lines.
+        run: |
+          set -eu
+          version=0.9.145
+          curl -fsSL "https://get.nexte.st/${version}/linux" | tar zxf - -C "$HOME/.cargo/bin"
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Lints
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Tests
+        run: cargo nextest run --all-features
+
+      - name: Doctests
+        run: cargo test --doc
+
+      - name: Release build
+        run: cargo build --release
