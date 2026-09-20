@@ -1,0 +1,85 @@
+[package]
+name = "decide"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+description = "Ask Jev for a typed decision, and get JSON a shell script can branch on."
+readme = "README.md"
+keywords = ["cli", "ai", "llm", "shell", "json"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+ureq = { version = "3.4", features = ["json"] }
+
+[dev-dependencies]
+tempfile = "3.27"
+
+# `src/lib.rs` and `src/main.rs` share the package name, so the binary's
+# `use decide::…` resolves to the library beside it, and no `[[bin]]` table is
+# needed. Integration tests reach the library and, through
+# `env!("CARGO_BIN_EXE_decide")`, the built binary.
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+# A panic here is a bug in a program that forbids panics in production code, and
+# an abort keeps the binary small. It also means a bug's exit code is 134, which
+# is outside the documented set of 0, 1, and 2 — deliberately, because "the
+# process died" is not a result.
+panic = "abort"
+
+[profile.test]
+opt-level = 1
+
+[lints.rust]
+unsafe_code = "forbid"          # and #![forbid(unsafe_code)] in lib.rs, which
+                                # is what covers the doctests
+missing_docs = "warn"
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+non_ascii_idents = "warn"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+missing_abi = "warn"
+elided_lifetimes_in_paths = "warn"
+
+[lints.clippy]
+# A lint *group* at the same priority as an individual entry wins, which is why
+# the groups are pinned to -1 and every override below can take effect.
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+missing_const_for_fn = "allow"      # fires on constructors that cannot be const
+multiple_crate_versions = "allow"   # nothing here can pin a transitive major
+cargo_common_metadata = "allow"     # the manifest above carries the metadata
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+exit = "deny"                       # `main` returns an ExitCode
+arithmetic_side_effects = "deny"    # retry counts and delays use checked/saturating
+integer_division = "deny"
+indexing_slicing = "deny"           # the path walk uses .get(), not [i]
+print_stdout = "deny"               # all I/O is injected (D14), so these hold
+print_stderr = "deny"               # everywhere, including the binary
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+struct_excessive_bools = "allow"
+too_many_lines = "warn"
+cognitive_complexity = "warn"
+cast_possible_truncation = "warn"

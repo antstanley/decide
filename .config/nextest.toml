@@ -1,0 +1,16 @@
+[store]
+dir = "target/nextest"
+
+[profile.default]
+retries = 0
+fail-fast = false
+test-threads = "num-cpus"
+slow-timeout = { period = "60s", terminate-after = 3 }
+leak-timeout = "100ms"
+
+# Retry and fail fast in CI: a test that passes on a retry is a test to look at,
+# not a test to trust.
+[profile.ci]
+retries = 2
+fail-fast = true
+slow-timeout = { period = "30s", terminate-after = 2 }

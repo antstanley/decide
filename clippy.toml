@@ -1,0 +1,11 @@
+# Tiger Style keeps `assert!` in production and permits the panic family in tests,
+# where a panic *is* the assertion mechanism. These three settings state the
+# distinction the lint cannot see by itself.
+allow-panic-in-tests = true
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+# A `dbg!` left in a test is still a debugging artefact with no place in a
+# committed test suite.
+allow-dbg-in-tests = false
+too-many-arguments-threshold = 6
+type-complexity-threshold = 200

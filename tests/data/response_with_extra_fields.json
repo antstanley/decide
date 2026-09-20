@@ -1,0 +1,9 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "is_urgent": { "type": "noul", "noul": 0.95, "something_new": [1, 2, 3] }
+  },
+  "usage": { "input_tokens": 296, "output_tokens": 20, "cached_tokens": 12 },
+  "request_id": "req_8f2c",
+  "region": "eu-west-1"
+}
