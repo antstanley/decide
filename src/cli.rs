@@ -295,8 +295,8 @@ const AFTER_HELP: &str = r#"Examples:
   Ask about a document that arrived on stdin, with no state in the questions file:
       cat ticket.txt | decide ask questions.json --select answers.department.choice
 
-  Store the API token, so that an environment variable is not needed:
-      printf %s "$TOKEN" | decide auth set
+  Store the API token; it is typed at a prompt, and never echoed:
+      decide auth set
 
 The API key is read from TYPESAFE_API_KEY, from a file named by --api-key-file or
 TYPESAFE_API_KEY_FILE, or from the store that `decide auth set` writes. It is never read
@@ -340,22 +340,27 @@ criteria, and a bare NAME sends null, meaning this option needs no extra detail.
 /// `decide auth --help`'s long description.
 const AUTH_LONG_ABOUT: &str = r#"Keep the API token, so that an environment variable is not needed.
 
-The token is read from stdin and never from a flag, because argv is readable by every
-process on the machine and is kept in shell history. TYPESAFE_API_KEY still wins over
-what is stored, so a script or a CI runner can override it for one call.
+Run in a terminal, `auth set` asks for the token and does not echo it, so it never
+reaches the shell's history. A pipe is read as it stands, so a script or a CI runner
+can still supply one. It is never a flag, because argv is readable by every process on
+the machine. TYPESAFE_API_KEY still wins over what is stored, so a caller can override
+it for one run.
 
+  decide auth set
   printf %s "$TOKEN" | decide auth set
   decide auth status
   decide auth unset"#;
 
 /// `decide auth set --help`'s long description.
-const AUTH_SET_LONG_ABOUT: &str = r#"Read a token from stdin and store it for later calls.
+const AUTH_SET_LONG_ABOUT: &str = r#"Store a token for the calls that follow.
 
-  printf %s "$TYPESAFE_API_KEY" | decide auth set
+  decide auth set                        # prompts, and does not echo what you type
+  printf %s "$TOKEN" | decide auth set   # for a script, which has no terminal
   decide auth set < key.txt
 
-The file is created readable only by its owner. A terminal is refused rather than read,
-because a secret typed at a prompt is echoed to the screen."#;
+The file is readable only by its owner: created that way, and narrowed if it was already
+there with wider permissions. Nothing is written to stdout, and the token is not in argv,
+so it is in neither the process table nor the shell's history."#;
 
 /// `decide auth unset --help`'s long description.
 const AUTH_UNSET_LONG_ABOUT: &str = r"Forget the stored token.

@@ -32,17 +32,27 @@ runtime beside the binary, no configuration file, and nothing to install first.
 
 Store it once, and no environment variable is needed:
 
-```sh
-printf %s "$TOKEN" | decide auth set
-decide auth status        # which source supplies the credential, never the value
-decide auth unset         # forget it again
+```console
+$ decide auth set
+TYPESAFE API token (it will not be echoed): 
+stored the token in "/home/you/.config/decide/api-key"
+
+$ decide auth status        # which source supplies the credential, never the value
+the credential stored at "/home/you/.config/decide/api-key"
+$ decide auth unset         # forget it again
 ```
 
-`auth set` reads the token from **stdin** and never from a flag — `argv` is readable by
-every process on the machine, and it is kept in shell history and in agent transcripts. It
-writes one file, readable only by its owner, at `$XDG_CONFIG_HOME/decide/api-key` (or
-`~/.config/decide/api-key`). A terminal is refused rather than read, because a secret typed
-at a prompt is echoed to the screen.
+The token is typed at a prompt, which does not echo it — so it is in neither the process
+table nor the shell's history. A pipe is read as it stands, so a script or a CI runner can
+still supply one:
+
+```sh
+printf %s "$TOKEN" | decide auth set     # for a machine with no terminal
+```
+
+Either way it writes one file, readable only by its owner, at
+`$XDG_CONFIG_HOME/decide/api-key` (or `~/.config/decide/api-key`). `auth set` never takes
+the token as an argument: `argv` is readable by every process on the machine.
 
 Three sources, in this order, and the first one that supplies a key wins:
 

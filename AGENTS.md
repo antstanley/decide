@@ -52,7 +52,7 @@ rightmost column is the one to read first.
 | `cli.rs` | the clap types and the help text; the only module that knows about `argv` | `cli::tests`, `tests/help.rs` |
 | `wire.rs` | the request and response shapes, the limit constants, validation | `wire::tests`, `tests/run.rs` |
 | `input.rs` | `Stdin`, the state rules, reading a document, the flags-to-question builder, the base URL | `input::tests` |
-| `config.rs` | the stored credential: its path, its file, and which of the three sources supplies it | `config::tests`, `tests/binary.rs` |
+| `config.rs` | the stored credential: its path, its file, the prompt that reads one, and which of the three sources supplies it | `config::tests`, `tests/binary.rs` |
 | `client.rs` | the agent, the auth header, one attempt, the retry loop, the error-body cap | `client::tests`, `tests/transport.rs` |
 | `report.rs` | path selection and rendering; no I/O at all | `report::tests`, `tests/run.rs` |
 | `error.rs` | `DecideError`, its `Display`, and its exit code | `error::tests` |
@@ -70,7 +70,7 @@ that reaches the real API.
 - **No `TYPESAFE_API_KEY` is needed** to build, lint, test, or use `--dry-run`. The suite
   binds sockets on `127.0.0.1` and never reaches the network; the single test that calls
   the real API is `#[ignore]`d.
-- The dependency set is the five in
+- The dependency set is the six in
   [`docs/design.md`](docs/design.md#the-dependency-set), plus `tempfile` for the tests.
   **`Cargo.lock` is committed**, because this is a binary: the versions that passed the last
   gate are the versions a fresh clone builds.
@@ -257,6 +257,17 @@ claims live in `tests/run.rs` and `tests/binary.rs`.
   script can override what a developer stored without unsetting anything; a *named* file
   that cannot be read is an error rather than a fall through, because the caller said where
   the key is. `config.rs` holds all of it.
+- **`auth set` prompts when it has a terminal, and reads a pipe when it does not.** The
+  prompt is the default because the pipe is the one that leaks: `printf %s "$TOKEN" | decide
+  auth set` puts the token in the shell's history, which is the same class of mistake as
+  `argv`. The reading is behind the `config::Secret` trait so the interactive branch is a
+  unit test — the real implementation needs a terminal, and the suite must never borrow the
+  developer's.
+- **The terminal handling is `rpassword`'s contract, not ours.** It clears
+  `ECHO`/`ECHONL`/`ICANON`/`ISIG`, restores the terminal in a `Drop` guard, and re-raises
+  SIGINT *after* restoring. Verified through a real pty once (token not echoed, Ctrl-C exits
+  by SIGINT with nothing stored); the suite does not assert it, because a pseudo-terminal is
+  one thing `std` does not have and a pty crate for one assertion is not worth the manifest.
 - **The one file `decide` writes is the credential, not a config file.** It is a token in a
   file — not parsed, not merged, mode 0600 — and adding a second key to it is the point at
   which [D13](docs/design.md#d13-one-credential-store-and-still-no-configuration-file)'s
@@ -283,7 +294,8 @@ which is the reason the enum is closed.
 [`docs/api.md`](docs/api.md#limits), and the test at the boundary in both directions.
 A limit is never changed in one place only.
 
-**The credential changes.** It is `config.rs` — the path, the file, and the order in
+**The credential changes.** It is `config.rs` — the path, the file, the prompt, and the
+order in
 `config::resolve` — plus the table in [`docs/cli.md`](docs/cli.md#where-the-credential-comes-from),
 [D5](docs/design.md#d5-the-credential-never-comes-from-argv) and
 [D13](docs/design.md#d13-one-credential-store-and-still-no-configuration-file), and the

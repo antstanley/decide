@@ -252,8 +252,8 @@ fn auth_set_refuses_an_empty_stdin() {
     assert_eq!(code(&output), 2);
     assert!(output.stdout.is_empty());
     assert!(
-        text(&output.stderr).contains("empty"),
-        "{}",
+        text(&output.stderr).contains("nothing was piped in"),
+        "an empty pipe says which way in was empty: {}",
         text(&output.stderr)
     );
 }

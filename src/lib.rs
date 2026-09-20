@@ -103,7 +103,14 @@ fn run_auth<In: Read, Out: Write, Err: Write>(
 ) -> Result<(), DecideError> {
     let path = config::path().ok_or(DecideError::NoCredentialStore)?;
     let environment = std::env::var("TYPESAFE_API_KEY").ok();
-    auth_at(command, &path, environment.as_deref(), &cli.global, io)
+    auth_at(
+        command,
+        &path,
+        environment.as_deref(),
+        &mut config::Terminal,
+        &cli.global,
+        io,
+    )
 }
 
 /// The `auth` actions, against a store at a known path.
@@ -115,12 +122,13 @@ fn auth_at<In: Read, Out: Write, Err: Write>(
     command: &AuthCommand,
     path: &Path,
     environment: Option<&str>,
+    secret: &mut dyn config::Secret,
     global: &GlobalArgs,
     io: &mut Io<In, Out, Err>,
 ) -> Result<(), DecideError> {
     match command {
         AuthCommand::Set => {
-            let token = config::read_token(&mut io.stdin)?;
+            let token = config::read_token(&mut io.stdin, &mut io.stderr, secret)?;
             config::store_at(path, &token)?;
             // The confirmation is a diagnostic, so it goes to stderr: stdout stays empty
             // for every subcommand that does not print a result.
@@ -454,6 +462,15 @@ mod tests {
         }
     }
 
+    /// A secret reader that answers with what a person would have typed.
+    struct Typed(&'static str);
+
+    impl config::Secret for Typed {
+        fn read_secret(&mut self) -> Result<String, DecideError> {
+            Ok(self.0.to_string())
+        }
+    }
+
     /// Run one `auth` action against a store at a known path.
     fn auth(command: &AuthCommand, path: &Path, stdin_text: &str, terminal: bool) -> Run {
         auth_with(command, path, stdin_text, terminal, None)
@@ -473,7 +490,8 @@ mod tests {
             stderr: Vec::new(),
         };
         let global = plain_global();
-        let result = auth_at(command, path, environment, &global, &mut io);
+        let mut typed = Typed("typed-at-the-prompt");
+        let result = auth_at(command, path, environment, &mut typed, &global, &mut io);
         Run {
             stdout: String::from_utf8(io.stdout).expect("stdout is text"),
             stderr: String::from_utf8(io.stderr).expect("stderr is text"),
@@ -501,15 +519,26 @@ mod tests {
     }
 
     #[test]
-    fn auth_set_refuses_a_terminal_rather_than_echoing_a_secret() {
+    fn auth_set_prompts_on_a_terminal_and_stores_what_was_typed() {
         let (_dir, path) = store_path();
 
-        let outcome = auth(&AuthCommand::Set, &path, "sekrit-token\n", true);
+        let outcome = auth(&AuthCommand::Set, &path, "", true);
 
-        let error = outcome.result.expect_err("a terminal is refused");
-        assert_eq!(error.exit_code(), 2);
-        assert!(!path.exists(), "nothing was stored");
-        assert!(outcome.stdout.is_empty());
+        assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+        assert!(
+            outcome.stdout.is_empty(),
+            "the prompt is a diagnostic, not a result"
+        );
+        assert!(
+            outcome.stderr.contains(config::PROMPT),
+            "{:?}",
+            outcome.stderr
+        );
+        assert_eq!(
+            config::load_at(&path).expect("readable"),
+            Some("typed-at-the-prompt".to_string()),
+            "the typed secret is what was stored"
+        );
     }
 
     #[test]
@@ -519,8 +548,12 @@ mod tests {
         let outcome = auth(&AuthCommand::Set, &path, "   \n", false);
 
         let error = outcome.result.expect_err("nothing to store");
-        assert!(error.to_string().contains("empty"), "{error}");
+        assert!(
+            error.to_string().contains("nothing was piped in"),
+            "{error}"
+        );
         assert!(!path.exists());
+        assert!(outcome.stdout.is_empty());
     }
 
     #[test]

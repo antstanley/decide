@@ -48,15 +48,15 @@ pub enum DecideError {
         reason: String,
     },
 
-    /// `decide auth set` was given a terminal rather than a pipe.
-    #[error(
-        "read the token from stdin, not from a terminal: pipe it in, as in \
-         `printf %s \"$TOKEN\" | decide auth set`"
-    )]
-    TokenFromTerminal,
+    /// The terminal the token was to be typed at could not be read.
+    #[error("cannot read the token from the terminal: {reason}")]
+    TokenUnreadable {
+        /// The OS error, verbatim.
+        reason: String,
+    },
 
-    /// `decide auth set` read nothing.
-    #[error("the token read from stdin is empty; nothing was stored")]
+    /// `decide auth set` read nothing, from the prompt or from a pipe.
+    #[error("no token was read: nothing was typed, and nothing was piped in")]
     EmptyToken,
 
     /// The file named as the credential could not be read.
@@ -262,7 +262,7 @@ impl DecideError {
             | Self::NoCredentialStore
             | Self::CredentialUnreadable { .. }
             | Self::CredentialUnwritable { .. }
-            | Self::TokenFromTerminal
+            | Self::TokenUnreadable { .. }
             | Self::EmptyToken
             | Self::ApiKeyFileUnreadable { .. }
             | Self::ApiKeyFileEmpty { .. }

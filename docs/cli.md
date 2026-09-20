@@ -336,23 +336,29 @@ flags and none of the evaluation flags: there is no state to send and no body to
 
 | Action | Does |
 |---|---|
-| `auth set` | reads a token from stdin and stores it, readable only by its owner |
+| `auth set` | asks for a token when a person is running it, reads a pipe when a script is, and stores it readable only by its owner |
 | `auth status` | prints which source supplies the credential, and never the value |
 | `auth unset` | removes the stored token |
 
 ```console
-$ printf %s "$TOKEN" | decide auth set
+$ decide auth set
+TYPESAFE API token (it will not be echoed): 
+stored the token in "/home/you/.config/decide/api-key"
+
+$ printf %s "$TOKEN" | decide auth set          # a script, which has no terminal
 stored the token in "/home/you/.config/decide/api-key"
 
 $ decide auth status
 TYPESAFE_API_KEY
 ```
 
-The token is read from **stdin** and never from a flag, for the reason there is no
-`--api-key` ([D5](design.md#d5-the-credential-never-comes-from-argv)):
-`argv` is readable by every process on the machine and is kept in shell history. A terminal
-is refused rather than read, because a secret typed at a prompt is echoed to the screen —
-`printf %s "$TOKEN" | decide auth set`, or `decide auth set < key.txt`, is the way in.
+The token is typed at a prompt, which does not echo it, or read from a **pipe** when stdin
+is not a terminal — so a script or a CI runner can still supply one, and an interactive
+call leaves nothing in the shell's history. It is never a flag, for the reason there is no
+`--api-key` ([D5](design.md#d5-the-credential-never-comes-from-argv)): `argv` is readable by
+every process on the machine. The prompt is written to stderr, and the newline that a
+terminal would have echoed after the return key is written there too, so the next line of
+output starts where it should.
 
 `set` and `unset` confirm on stderr and write nothing to stdout, because they are actions;
 `status` prints its one line on stdout, because it is a question. `status` is exit `0` even
@@ -400,7 +406,7 @@ is sent, and `models` sends no body to name a model in.
 
 | Variable | Used for |
 |---|---|
-| `TYPESAFE_API_KEY` | The credential. Required for every subcommand except `--dry-run`. |
+| `TYPESAFE_API_KEY` | The credential. Required for every subcommand except `--dry-run` and `--dry-run`'s siblings in `auth`. |
 | `TYPESAFE_API_KEY_FILE` | A file holding the credential, for a secret mounted where `argv` and `env` cannot carry one. It is read only when `TYPESAFE_API_KEY` is unset or empty, so a key in the environment is never a silent fallback for a file that cannot be read. |
 | `TYPESAFE_BASE_URL` | The API root, or the `/v1/systemone` endpoint in full. Overridden by `--base-url`. |
 | `TYPESAFE_DEFAULT_MODEL` | The model when neither `--model` nor the document names one. Default `jev-latest`. |
@@ -496,8 +502,8 @@ Examples:
   Ask about a document that arrived on stdin, with no state in the questions file:
       cat ticket.txt | decide ask questions.json --select answers.department.choice
 
-  Store the API token, so that an environment variable is not needed:
-      printf %s "$TOKEN" | decide auth set
+  Store the API token; it is typed at a prompt, and never echoed:
+      decide auth set
 
 The API key is read from TYPESAFE_API_KEY, from a file named by --api-key-file or
 TYPESAFE_API_KEY_FILE, or from the store that `decide auth set` writes. It is never read

@@ -47,7 +47,7 @@ aspirations:
 3. **Fast to call correctly, from a one-liner or a script.** The two shapes in the
    synopsis exist because those are the two real uses: one question asked once, and a
    stable set of questions asked of many states.
-4. **Small.** One binary, five dependencies, no runtime, nothing to install beside it,
+4. **Small.** One binary, six dependencies, no runtime, nothing to install beside it,
    and one file it writes for you — the credential, and nothing else. It should be
    auditable in one sitting.
 
@@ -184,10 +184,22 @@ without having to unset anything. The precedence is in
 [`cli.md`](cli.md#where-the-credential-comes-from); the file itself is
 [D13](#d13-one-credential-store-and-still-no-configuration-file).
 
-*Rejected:* `--api-key`, for the reason above. *Rejected:* prompting for the token with echo
-turned off. Doing it honestly needs a terminal-handling dependency, and it cannot be tested
-without a pseudo-terminal — so the pipe is the instruction, as it is for
-`gh auth login --with-token`.
+`decide auth set` prompts when a terminal is watching and reads a pipe when one is not. The
+prompt came second, and the reason it came second is worth recording: the pipe was the
+original instruction, and
+it was wrong. `printf %s "$TOKEN" | decide auth set` writes the token into the shell's
+history, which is the same class of leak as `argv` and one this tool has no business
+teaching. The earlier objection — that turning echo off needs a terminal-handling
+dependency — turned out to be a two-crate dependency (`rpassword`, and `libc`, which was
+already in the tree) that also does the part a hand-rolled `stty -echo` gets wrong: it
+restores the terminal in a `Drop` guard and re-raises SIGINT *after* restoring, so an
+interrupted prompt does not leave a shell with no echo.
+
+*Rejected:* `--api-key`, for the reason above. *Rejected:* the `stty -echo` idiom, which
+needs no dependency at all: it shells out, it is unix-only, and Ctrl-C at the prompt kills
+the process with echo still off, which is a worse bug than the one it fixes.
+*Rejected:* an interactive prompt with echo left on, which is not a credential store but a
+way of printing the credential.
 
 ### D6. Two forms for the questions: flags for one, a document for many
 
@@ -354,7 +366,8 @@ profile is inherited by every process that shell starts, including ones with no 
 holding it.
 
 The file is a token in a file rather than a format: one setting, not parsed, not merged
-with anything, and created readable only by its owner. That is what keeps this from being
+with anything, and readable only by its owner — created that way, and narrowed if it was
+already there with wider permissions. That is what keeps this from being
 the configuration file the rest of this decision refuses — a *second* key in it would be
 the point at which the objection bites, and the point at which this decision needs
 revisiting. `TYPESAFE_LOG_LEVEL` is still unused for the original reason: it configures a
@@ -481,7 +494,7 @@ the middle.
 
 ## The dependency set
 
-Five, and every one of them is load-bearing.
+Six, and every one of them is load-bearing.
 
 | Crate | Version | Why it is here | Why nothing else is |
 |---|---|---|---|
@@ -489,6 +502,7 @@ Five, and every one of them is load-bearing.
 | `serde` | 1.0 | The request and response shapes, with the tagged question enum. | — |
 | `serde_json` | 1.0 | The wire format, the state value, path selection. | Sorted maps by default, which is D4's determinism for free. |
 | `ureq` | 3.4 | One blocking POST and one GET, TLS via rustls (its default), gzip. | 3.4 as of 2026-09-20. The `json` feature is added for `send_json`; the defaults already carry rustls and gzip. |
+| `rpassword` | 7.5 | Reading a secret at a terminal without echoing it, for `decide auth set`. | Clears ECHO/ECHONL/ICANON/ISIG, restores the terminal in a `Drop` guard, and re-raises SIGINT after restoring. Its two crates are this one and `rtoolbox`; `libc`, which it needs, was already in the tree. The smaller alternative is `stty -echo` as a subprocess, which is rejected above. |
 | `thiserror` | 2.0 | The error enum's `Display` and `From` impls. | Hand-writing `Display` for ~15 variants is more code with more ways to be inconsistent. |
 
 Dev-dependency: `tempfile` 3.27, for the file and stdin cases in the tests. The fake HTTP

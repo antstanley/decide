@@ -81,6 +81,15 @@ environment variable, still sends the `Authorization` header.
 `tests/help.rs` is the same layer: it runs the binary and compares `--help` with the block
 in [`cli.md`](cli.md#help-text), which is the only way to hold the interface to the page.
 
+**One behaviour the suite does not assert: the interactive prompt.** Clearing the terminal's
+echo needs a pseudo-terminal, and `std` has none — a pty crate would be a dependency for one
+assertion. What is asserted is everything around it: that the prompt (and only the prompt)
+goes to stderr, that a terminal takes the prompt path and a pipe does not, that a failed
+terminal read is refused by name, and that nothing is stored from an empty either way. The
+termios behaviour itself is `rpassword`'s contract, and the wiring was checked by hand once
+through a real pty: the token was not echoed, the store was written 0600, and Ctrl-C at the
+prompt exited by SIGINT with nothing stored.
+
 ## The fake server
 
 `tests/support/` holds a small HTTP/1.1 server built on `std::net::TcpListener` — no mock
@@ -154,7 +163,8 @@ Every row is a test that exists with both halves.
 | The response becomes an answer | All three answer types from the vendor's fixtures | A missing answer for a question; an answer whose type disagrees with its question; a body that is not JSON |
 | stdout is the response | The exact bytes, compact and pretty | A failed run leaves stdout empty; `--verbose` does not change stdout |
 | A selected value is a usable value | `--select` into an object, an array, a number, a bool; `--value`; `--field confidence` | A path that misses names the segment and the available keys; `--value` on a three-question request is refused; `--value` and `--field` together are refused |
-| A credential is found without an environment variable | Each of the three sources alone, in that order; a stored token used by a real call through the built binary | No source at all; a named file that cannot be read; `auth set` from a terminal or with an empty stdin; `auth status` never printing the value |
+| A credential is found without an environment variable | Each of the three sources alone, in that order; a stored token used by a real call through the built binary | No source at all; a named file that cannot be read; `auth set` with an empty pipe and with nothing typed; `auth status` never printing the value |
+| A secret never reaches a stream we did not hand out | The prompt goes to stderr, a terminal reads the secret and writes no prompt, and the file is 0600 | A read that fails is refused by name; a typed token keeps its own whitespace; the token is absent from stdout, stderr, and the confirmation |
 | The help is the interface | The block in [`cli.md`](cli.md#help-text), compared with what the binary prints; every flag present in `--help` and absent where it could not act | A description column that moved; `--api-key` parsed as a flag; an evaluation flag accepted by `models` or `auth` |
 
 ## The units, named
@@ -189,7 +199,10 @@ client::a_server_that_never_answers_times_out;
 config::the_store_supplies_the_credential_when_nothing_else_does;
 config::a_named_file_that_cannot_be_read_does_not_fall_through_to_the_store;
 config::the_store_is_readable_only_by_its_owner;
-config::a_credential_is_read_from_a_pipe_and_not_from_a_terminal;
+config::a_credential_is_read_from_a_pipe_without_a_prompt;
+config::a_terminal_is_prompted_and_the_prompt_goes_to_stderr;
+config::a_terminal_read_that_fails_is_refused_by_name;
+config::an_empty_token_is_refused_whichever_way_it_arrived;
 input::both_spellings_of_the_endpoint_reduce_to_the_same_root;
 cli::auth_takes_no_credential_flag_either;
 
