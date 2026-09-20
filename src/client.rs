@@ -11,7 +11,6 @@
 //! `--verbose` is asserted without capturing a subprocess.
 
 use std::io::{Read as _, Write};
-use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
@@ -47,39 +46,6 @@ pub struct ClientConfig {
     pub backoff_ms: u64,
     /// Whether to report progress on the writer passed with each call.
     pub verbose: bool,
-}
-
-/// Resolve the credential: the environment first, then the file it names.
-///
-/// The file is read only when `TYPESAFE_API_KEY` is unset or empty, so a key in the
-/// environment is never a silent fallback for a file that cannot be read
-/// ([D5](../docs/design.md#d5-the-credential-comes-from-the-environment-never-from-argv)).
-pub fn resolve_api_key(
-    environment: Option<String>,
-    file: Option<&Path>,
-) -> Result<String, DecideError> {
-    if let Some(key) = environment.filter(|key| !key.is_empty()) {
-        return Ok(key);
-    }
-
-    let Some(path) = file else {
-        return Err(DecideError::MissingApiKey);
-    };
-
-    let text =
-        std::fs::read_to_string(path).map_err(|error| DecideError::ApiKeyFileUnreadable {
-            path: path.to_path_buf(),
-            reason: error.to_string(),
-        })?;
-    // One trailing newline, so that a file written by `echo` works.
-    let key = text.strip_suffix('\n').unwrap_or(&text);
-    let key = key.strip_suffix('\r').unwrap_or(key);
-    if key.is_empty() {
-        return Err(DecideError::ApiKeyFileEmpty {
-            path: path.to_path_buf(),
-        });
-    }
-    Ok(key.to_string())
 }
 
 /// POST one request body to `/v1/systemone` and return the response body.
@@ -430,78 +396,6 @@ fn outcome(status: u16, body: &str) -> String {
 mod tests {
     // `Write`, for the temporary key file, comes in through `super`.
     use super::*;
-
-    /// A temporary file holding `text`, and the guard that keeps it alive.
-    fn key_file(text: &str) -> (tempfile::NamedTempFile, String) {
-        let mut file = tempfile::NamedTempFile::new().expect("a temporary file");
-        file.write_all(text.as_bytes()).expect("write the key");
-        let path = file.path().to_string_lossy().into_owned();
-        (file, path)
-    }
-
-    #[test]
-    fn the_environment_key_wins_over_the_file() {
-        let (_file, path) = key_file("from-the-file\n");
-
-        let key = resolve_api_key(
-            Some("from-the-environment".to_string()),
-            Some(Path::new(&path)),
-        )
-        .expect("a key is found");
-
-        assert_eq!(key, "from-the-environment");
-    }
-
-    #[test]
-    fn the_file_is_read_when_the_environment_is_unset_or_empty() {
-        let (_file, path) = key_file("from-the-file\n");
-        let file = Path::new(&path);
-
-        assert_eq!(
-            resolve_api_key(None, Some(file)).expect("a key is found"),
-            "from-the-file"
-        );
-        assert_eq!(
-            resolve_api_key(Some(String::new()), Some(file)).expect("a key is found"),
-            "from-the-file"
-        );
-    }
-
-    #[test]
-    fn one_trailing_newline_is_stripped_so_a_file_written_by_echo_works() {
-        let (_file, path) = key_file("sekrit\n");
-
-        let key = resolve_api_key(None, Some(Path::new(&path))).expect("a key is found");
-
-        assert_eq!(key, "sekrit");
-    }
-
-    #[test]
-    fn a_key_file_that_is_empty_is_refused_by_path() {
-        let (_file, path) = key_file("");
-
-        let error = resolve_api_key(None, Some(Path::new(&path))).expect_err("an empty key");
-
-        assert_eq!(error.exit_code(), 2);
-        assert!(error.to_string().contains(&path), "{error}");
-    }
-
-    #[test]
-    fn an_unreadable_key_file_names_the_path() {
-        let error =
-            resolve_api_key(None, Some(Path::new("/nonexistent/key"))).expect_err("no such file");
-
-        assert!(error.to_string().contains("/nonexistent/key"), "{error}");
-    }
-
-    #[test]
-    fn no_credential_at_all_is_a_usage_error() {
-        let error = resolve_api_key(None, None).expect_err("there is no key");
-
-        assert_eq!(error.exit_code(), 2);
-        assert!(error.to_string().contains("TYPESAFE_API_KEY"), "{error}");
-        assert!(error.to_string().contains("--api-key-file"), "{error}");
-    }
 
     #[test]
     fn the_backoff_doubles_and_is_capped() {

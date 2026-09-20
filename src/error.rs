@@ -16,12 +16,48 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum DecideError {
     // ---- the invocation is wrong: exit 2 ----------------------------------------
-    /// No credential was found in the environment or in the file it named.
+    /// No credential was found in the environment, in a named file, or in the store.
     #[error(
-        "no API key: set TYPESAFE_API_KEY, or put the key in a file and name it with \
-         --api-key-file or TYPESAFE_API_KEY_FILE"
+        "no API key: set TYPESAFE_API_KEY, name a file with --api-key-file or \
+         TYPESAFE_API_KEY_FILE, or store one with `decide auth set`"
     )]
     MissingApiKey,
+
+    /// There is no directory to keep a stored credential in.
+    #[error(
+        "cannot tell where to keep the credential: neither XDG_CONFIG_HOME nor HOME is set, \
+         so set TYPESAFE_API_KEY or name a file with --api-key-file"
+    )]
+    NoCredentialStore,
+
+    /// The store could not be read.
+    #[error("cannot read the stored credential at \"{}\": {reason}", path.display())]
+    CredentialUnreadable {
+        /// The path that was consulted.
+        path: PathBuf,
+        /// The OS error, verbatim.
+        reason: String,
+    },
+
+    /// The store could not be written.
+    #[error("cannot store the credential at \"{}\": {reason}", path.display())]
+    CredentialUnwritable {
+        /// The path that was written.
+        path: PathBuf,
+        /// The OS error, verbatim.
+        reason: String,
+    },
+
+    /// `decide auth set` was given a terminal rather than a pipe.
+    #[error(
+        "read the token from stdin, not from a terminal: pipe it in, as in \
+         `printf %s \"$TOKEN\" | decide auth set`"
+    )]
+    TokenFromTerminal,
+
+    /// `decide auth set` read nothing.
+    #[error("the token read from stdin is empty; nothing was stored")]
+    EmptyToken,
 
     /// The file named as the credential could not be read.
     #[error("cannot read the API key file \"{}\": {reason}", path.display())]
@@ -223,6 +259,11 @@ impl DecideError {
     pub const fn exit_code(&self) -> u8 {
         match self {
             Self::MissingApiKey
+            | Self::NoCredentialStore
+            | Self::CredentialUnreadable { .. }
+            | Self::CredentialUnwritable { .. }
+            | Self::TokenFromTerminal
+            | Self::EmptyToken
             | Self::ApiKeyFileUnreadable { .. }
             | Self::ApiKeyFileEmpty { .. }
             | Self::BaseUrlWithoutScheme { .. }

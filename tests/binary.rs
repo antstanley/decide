@@ -141,6 +141,158 @@ fn a_credential_in_a_file_is_used_when_the_environment_has_none() {
     );
 }
 
+/// Run the built binary with a home directory of our choosing, and text on stdin.
+fn decide_in_home(args: &[&str], home: &std::path::Path, stdin_text: &str) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_decide"));
+    command
+        .args(args)
+        // A cleared environment and a home of our own, so the store the child reads and
+        // writes is one the test owns.
+        .env_clear()
+        .env("HOME", home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().expect("the binary runs");
+    {
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        stdin.write_all(stdin_text.as_bytes()).expect("write");
+    }
+    child.wait_with_output().expect("the child finishes")
+}
+
+#[test]
+fn a_stored_token_is_used_when_the_environment_has_none() {
+    let server = FakeServer::start(vec![Reply::json(ANSWERS)]);
+    let (_dir, doc) = quickstart();
+    let home = tempfile::tempdir().expect("a temporary home");
+
+    let stored = decide_in_home(&["auth", "set"], home.path(), "from-the-store\n");
+
+    assert_eq!(code(&stored), 0, "stderr: {}", text(&stored.stderr));
+    assert!(stored.stdout.is_empty(), "a confirmation is a diagnostic");
+    assert!(
+        text(&stored.stderr).contains("stored the token"),
+        "{}",
+        text(&stored.stderr)
+    );
+
+    let called = decide_in_home(&["ask", &doc, "--base-url", &server.url()], home.path(), "");
+
+    assert_eq!(code(&called), 0, "stderr: {}", text(&called.stderr));
+    let seen = server.seen();
+    let request = seen.first().expect("one request was seen");
+    assert_eq!(
+        request.header("authorization"),
+        Some("Bearer from-the-store"),
+        "the credential came from the store, with no environment variable set"
+    );
+}
+
+#[test]
+fn auth_status_reports_where_the_credential_comes_from_without_printing_it() {
+    let home = tempfile::tempdir().expect("a temporary home");
+
+    let empty = decide_in_home(&["auth", "status"], home.path(), "");
+    assert_eq!(
+        code(&empty),
+        0,
+        "nothing configured is a fact, not a failure"
+    );
+    assert!(
+        text(&empty.stdout).contains("no credential"),
+        "{}",
+        text(&empty.stdout)
+    );
+
+    let stored = decide_in_home(&["auth", "set"], home.path(), "sekrit-token\n");
+    assert_eq!(code(&stored), 0);
+
+    let status = decide_in_home(&["auth", "status"], home.path(), "");
+    assert_eq!(code(&status), 0);
+    let stdout = text(&status.stdout);
+    assert!(stdout.contains("api-key"), "{stdout}");
+    assert!(
+        !stdout.contains("sekrit-token"),
+        "the value is never printed"
+    );
+}
+
+#[test]
+fn auth_unset_forgets_the_stored_token() {
+    let home = tempfile::tempdir().expect("a temporary home");
+
+    assert_eq!(
+        code(&decide_in_home(
+            &["auth", "set"],
+            home.path(),
+            "sekrit-token\n"
+        )),
+        0
+    );
+    assert_eq!(
+        code(&decide_in_home(&["auth", "unset"], home.path(), "")),
+        0
+    );
+
+    let status = decide_in_home(&["auth", "status"], home.path(), "");
+    assert!(
+        text(&status.stdout).contains("no credential"),
+        "{}",
+        text(&status.stdout)
+    );
+}
+
+#[test]
+fn auth_set_refuses_an_empty_stdin() {
+    let home = tempfile::tempdir().expect("a temporary home");
+
+    let output = decide_in_home(&["auth", "set"], home.path(), "");
+
+    assert_eq!(code(&output), 2);
+    assert!(output.stdout.is_empty());
+    assert!(
+        text(&output.stderr).contains("empty"),
+        "{}",
+        text(&output.stderr)
+    );
+}
+
+#[test]
+fn the_environment_still_overrides_the_stored_token() {
+    let server = FakeServer::start(vec![Reply::json(ANSWERS)]);
+    let (_dir, doc) = quickstart();
+    let home = tempfile::tempdir().expect("a temporary home");
+    assert_eq!(
+        code(&decide_in_home(
+            &["auth", "set"],
+            home.path(),
+            "from-the-store\n"
+        )),
+        0
+    );
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_decide"));
+    command
+        .args(["ask", &doc, "--base-url", &server.url()])
+        .env_clear()
+        .env("HOME", home.path())
+        .env("TYPESAFE_API_KEY", "from-the-environment")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let called = command.output().expect("the binary runs");
+
+    assert_eq!(code(&called), 0, "stderr: {}", text(&called.stderr));
+    let seen = server.seen();
+    let request = seen.first().expect("one request was seen");
+    assert_eq!(
+        request.header("authorization"),
+        Some("Bearer from-the-environment"),
+        "a variable is the caller saying what to use this time"
+    );
+}
+
 #[test]
 fn a_failed_evaluation_is_exit_one_with_empty_stdout() {
     let server = FakeServer::start(vec![

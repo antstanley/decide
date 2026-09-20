@@ -215,15 +215,26 @@ pub fn resolve_model(
         .to_string()
 }
 
-/// Check a base URL has a scheme and normalise away one trailing slash, so that
-/// `/v1/systemone` is never appended to a base that already ends in one.
+/// The path the evaluation endpoint lives under, which a base URL may already name.
+const ENDPOINT_PATH: &str = "/v1/systemone";
+
+/// Check a base URL has a scheme, and reduce it to the API root.
+///
+/// Two spellings are accepted, because both are things a caller reasonably has in hand: the
+/// root itself (`https://api.typesafe.ai`, `http://127.0.0.1:8080`), and the evaluation
+/// endpoint in full (`https://api.typesafe.ai/v1/systemone`), which is what the default is
+/// and what the API documentation shows. Both reduce to the root, so `/v1/systemone` is
+/// never appended twice and `GET /v1/models` stays a sibling of the POST.
 pub fn resolve_base_url(raw: &str) -> Result<String, DecideError> {
     let trimmed = raw.trim_end_matches('/');
     let host = trimmed
         .strip_prefix("https://")
         .or_else(|| trimmed.strip_prefix("http://"));
     match host {
-        Some(host) if !host.is_empty() => Ok(trimmed.to_string()),
+        Some(host) if !host.is_empty() => {
+            let root = trimmed.strip_suffix(ENDPOINT_PATH).unwrap_or(trimmed);
+            Ok(root.trim_end_matches('/').to_string())
+        }
         _ => Err(DecideError::BaseUrlWithoutScheme {
             url: raw.to_string(),
         }),
@@ -678,6 +689,47 @@ mod tests {
             "http://127.0.0.1:8080"
         );
         assert!(resolve_base_url("https://").is_err());
+    }
+
+    #[test]
+    fn both_spellings_of_the_endpoint_reduce_to_the_same_root() {
+        let root = resolve_base_url("https://api.typesafe.ai").expect("a scheme is there");
+        let endpoint =
+            resolve_base_url("https://api.typesafe.ai/v1/systemone").expect("a scheme is there");
+
+        assert_eq!(root, "https://api.typesafe.ai");
+        assert_eq!(endpoint, root, "the endpoint in full is the same base URL");
+    }
+
+    #[test]
+    fn the_default_base_url_is_the_endpoint_and_reduces_to_the_root() {
+        assert_eq!(
+            wire::DEFAULT_BASE_URL,
+            "https://api.typesafe.ai/v1/systemone"
+        );
+        assert_eq!(
+            resolve_base_url(wire::DEFAULT_BASE_URL).expect("a scheme is there"),
+            "https://api.typesafe.ai"
+        );
+        assert_eq!(
+            resolve_base_url("https://api.typesafe.ai/v1/systemone/").expect("a scheme is there"),
+            "https://api.typesafe.ai",
+            "a trailing slash is trimmed before the path is recognised"
+        );
+    }
+
+    #[test]
+    fn a_url_that_merely_ends_in_something_like_the_path_keeps_its_own() {
+        // A proxy that mounts the API under a path of its own keeps that path: only the
+        // exact endpoint suffix is recognised.
+        assert_eq!(
+            resolve_base_url("https://proxy.example/jev").expect("a scheme is there"),
+            "https://proxy.example/jev"
+        );
+        assert_eq!(
+            resolve_base_url("https://api.typesafe.ai/v2/systemone").expect("a scheme is there"),
+            "https://api.typesafe.ai/v2/systemone"
+        );
     }
 
     #[test]

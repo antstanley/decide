@@ -111,9 +111,30 @@ fn the_help_says_a_credential_does_not_come_from_a_flag() {
 
     assert!(
         !printed.contains("--api-key "),
-        "there is no --api-key flag"
+        "there is no --api-key flag, only --api-key-file"
     );
-    assert!(printed.contains("It is not read from a flag"), "{printed}");
+    assert!(printed.contains("never read\nfrom a flag"), "{printed}");
+    assert!(
+        printed.contains("decide auth set"),
+        "the help names the way to store one instead: {printed}"
+    );
+}
+
+#[test]
+fn the_help_names_the_auth_subcommand_and_its_actions() {
+    assert!(help(&["--help"]).contains("auth    Store the API token"));
+
+    let printed = help(&["auth", "--help"]);
+    for action in ["set", "unset", "status"] {
+        assert!(
+            printed.contains(action),
+            "{action} is missing from `decide auth --help`"
+        );
+    }
+    assert!(
+        printed.contains("printf %s"),
+        "the pipe is the instruction: {printed}"
+    );
 }
 
 #[test]

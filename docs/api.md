@@ -18,7 +18,9 @@ Content-Type: application/json
 ```
 
 - `base_url` defaults to `https://api.typesafe.ai`. The SDKs read it from
-  `TYPESAFE_BASE_URL`.
+  `TYPESAFE_BASE_URL`. `decide` accepts either that root or the endpoint in full
+  (`https://api.typesafe.ai/v1/systemone`) in the same setting, and reduces both to the
+  root the two calls are built from.
 - The path is `/v1/systemone`. There is no other evaluation endpoint.
 - There is **no streaming**. One request produces one complete response body. This is
   the single most load-bearing fact for `decide`: it means an ordinary blocking HTTP
@@ -216,7 +218,7 @@ its own:
 | Variable | Used for | Default |
 |---|---|---|
 | `TYPESAFE_API_KEY` | The credential. | none — required |
-| `TYPESAFE_BASE_URL` | The API root. | `https://api.typesafe.ai` |
+| `TYPESAFE_BASE_URL` | The API root, or the endpoint in full. | `https://api.typesafe.ai` |
 | `TYPESAFE_DEFAULT_MODEL` | The model when the request does not name one. | `jev-latest` |
 | `TYPESAFE_LOG_LEVEL` | The SDKs' own logging. | not used by `decide` |
 

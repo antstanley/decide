@@ -74,7 +74,12 @@ produces `//v1/systemone`.
 
 A handful of tests that run the compiled program as a child process. They exist to pin the
 things the library tests cannot see: the exit-code table, the fact that `--help` goes to
-stdout and exits `0`, and that stdout survives `--verbose` byte for byte.
+stdout and exits `0`, that stdout survives `--verbose` byte for byte, and that the stored
+credential works end to end — a child with a home directory of the test's choosing, and no
+environment variable, still sends the `Authorization` header.
+
+`tests/help.rs` is the same layer: it runs the binary and compares `--help` with the block
+in [`cli.md`](cli.md#help-text), which is the only way to hold the interface to the page.
 
 ## The fake server
 
@@ -149,7 +154,8 @@ Every row is a test that exists with both halves.
 | The response becomes an answer | All three answer types from the vendor's fixtures | A missing answer for a question; an answer whose type disagrees with its question; a body that is not JSON |
 | stdout is the response | The exact bytes, compact and pretty | A failed run leaves stdout empty; `--verbose` does not change stdout |
 | A selected value is a usable value | `--select` into an object, an array, a number, a bool; `--value`; `--field confidence` | A path that misses names the segment and the available keys; `--value` on a three-question request is refused; `--value` and `--field` together are refused |
-| The exit code is a result | `0` for a completed evaluation and for `--dry-run` | `1` for a status error, a transport failure, and a timeout; `2` for every usage error in this page |
+| A credential is found without an environment variable | Each of the three sources alone, in that order; a stored token used by a real call through the built binary | No source at all; a named file that cannot be read; `auth set` from a terminal or with an empty stdin; `auth status` never printing the value |
+| The help is the interface | The block in [`cli.md`](cli.md#help-text), compared with what the binary prints; every flag present in `--help` and absent where it could not act | A description column that moved; `--api-key` parsed as a flag; an evaluation flag accepted by `models` or `auth` |
 
 ## The units, named
 
@@ -179,6 +185,13 @@ client::a_rate_limit_is_retried_after_the_retry_after_header;
 client::a_validation_error_is_not_retried;
 client::an_overloaded_is_retried;
 client::a_server_that_never_answers_times_out;
+
+config::the_store_supplies_the_credential_when_nothing_else_does;
+config::a_named_file_that_cannot_be_read_does_not_fall_through_to_the_store;
+config::the_store_is_readable_only_by_its_owner;
+config::a_credential_is_read_from_a_pipe_and_not_from_a_terminal;
+input::both_spellings_of_the_endpoint_reduce_to_the_same_root;
+cli::auth_takes_no_credential_flag_either;
 
 report::a_string_value_is_printed_without_quotes;
 report::a_missing_path_names_the_segment_and_the_keys_available;

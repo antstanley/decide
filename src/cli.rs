@@ -67,12 +67,12 @@ pub struct EvalArgs {
 /// A knob that shapes every request, wherever it appears.
 #[derive(Debug, Args)]
 pub struct GlobalArgs {
-    /// API root
+    /// The API endpoint, or the root it lives under
     #[arg(
         long,
         value_name = "URL",
         env = "TYPESAFE_BASE_URL",
-        default_value = "https://api.typesafe.ai",
+        default_value = crate::wire::DEFAULT_BASE_URL,
         hide_env_values = true,
         global = true
     )]
@@ -227,6 +227,30 @@ pub enum Command {
 
     /// List the models this account can send
     Models,
+
+    /// Store the API token, so that an environment variable is not needed
+    #[command(long_about = AUTH_LONG_ABOUT)]
+    Auth {
+        /// What to do with the store.
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
+}
+
+/// What `decide auth` can do with the one secret it keeps.
+#[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
+pub enum AuthCommand {
+    /// Read a token from stdin and store it
+    #[command(long_about = AUTH_SET_LONG_ABOUT)]
+    Set,
+
+    /// Forget the stored token
+    #[command(long_about = AUTH_UNSET_LONG_ABOUT)]
+    Unset,
+
+    /// Say where the credential comes from, without printing it
+    #[command(long_about = AUTH_STATUS_LONG_ABOUT)]
+    Status,
 }
 
 impl Command {
@@ -238,7 +262,7 @@ impl Command {
             | Self::Noul { eval, .. }
             | Self::Choice { eval, .. }
             | Self::Score { eval, .. } => Some(eval),
-            Self::Models => None,
+            Self::Models | Self::Auth { .. } => None,
         }
     }
 }
@@ -271,9 +295,13 @@ const AFTER_HELP: &str = r#"Examples:
   Ask about a document that arrived on stdin, with no state in the questions file:
       cat ticket.txt | decide ask questions.json --select answers.department.choice
 
-The API key is read from TYPESAFE_API_KEY, or from the file named by
-TYPESAFE_API_KEY_FILE. It is not read from a flag: a flag is visible to every process on
-the machine and is kept in the shell's history.
+  Store the API token, so that an environment variable is not needed:
+      printf %s "$TOKEN" | decide auth set
+
+The API key is read from TYPESAFE_API_KEY, from a file named by --api-key-file or
+TYPESAFE_API_KEY_FILE, or from the store that `decide auth set` writes. It is never read
+from a flag: a flag is visible to every process on the machine, and it is kept in the
+shell's history.
 
 stdout carries the response and nothing else. Progress and errors go to stderr.
 Exit codes: 0 the evaluation completed, 1 it failed, 2 the invocation is wrong."#;
@@ -308,6 +336,42 @@ criteria, and a bare NAME sends null, meaning this option needs no extra detail.
 
   decide choice "which team should handle this?" --state-file ticket.txt \
     --option billing="invoices, refunds" --option technical="bugs, outages" --value"#;
+
+/// `decide auth --help`'s long description.
+const AUTH_LONG_ABOUT: &str = r#"Keep the API token, so that an environment variable is not needed.
+
+The token is read from stdin and never from a flag, because argv is readable by every
+process on the machine and is kept in shell history. TYPESAFE_API_KEY still wins over
+what is stored, so a script or a CI runner can override it for one call.
+
+  printf %s "$TOKEN" | decide auth set
+  decide auth status
+  decide auth unset"#;
+
+/// `decide auth set --help`'s long description.
+const AUTH_SET_LONG_ABOUT: &str = r#"Read a token from stdin and store it for later calls.
+
+  printf %s "$TYPESAFE_API_KEY" | decide auth set
+  decide auth set < key.txt
+
+The file is created readable only by its owner. A terminal is refused rather than read,
+because a secret typed at a prompt is echoed to the screen."#;
+
+/// `decide auth unset --help`'s long description.
+const AUTH_UNSET_LONG_ABOUT: &str = r"Forget the stored token.
+
+  decide auth unset
+
+Nothing else is touched: an environment variable or a file named with --api-key-file
+still supplies a credential after this.";
+
+/// `decide auth status --help`'s long description.
+const AUTH_STATUS_LONG_ABOUT: &str = r"Say which of the three sources supplies the credential.
+
+  decide auth status
+
+The order is TYPESAFE_API_KEY, then --api-key-file or TYPESAFE_API_KEY_FILE, then the
+store. The value is never printed.";
 
 /// `decide score --help`'s long description.
 const SCORE_LONG_ABOUT: &str = r#"Ask for a position along ordered levels you define.
@@ -546,6 +610,66 @@ mod tests {
     }
 
     #[test]
+    fn auth_has_three_actions() {
+        for (argument, expected) in [
+            ("set", AuthCommand::Set),
+            ("unset", AuthCommand::Unset),
+            ("status", AuthCommand::Status),
+        ] {
+            let cli = accepted(&["decide", "auth", argument]);
+            let Command::Auth { command } = &cli.command else {
+                panic!("that is the auth subcommand");
+            };
+            assert_eq!(command, &expected, "decide auth {argument}");
+        }
+    }
+
+    #[test]
+    fn auth_without_an_action_prints_its_own_help() {
+        let error = parse(&["decide", "auth"]).expect_err("there is nothing to do");
+
+        assert_eq!(
+            error.kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+        assert!(
+            error.use_stderr(),
+            "exit 2, and the help is a diagnostic here"
+        );
+        assert!(error.to_string().contains("Usage: decide auth"), "{error}");
+        assert!(error.to_string().contains("status"), "{error}");
+    }
+
+    #[test]
+    fn an_unrecognised_auth_action_is_a_usage_error() {
+        let error = parse(&["decide", "auth", "forget"]).expect_err("there is no forget");
+
+        assert_eq!(error.kind(), ErrorKind::InvalidSubcommand);
+    }
+
+    #[test]
+    fn auth_takes_no_evaluation_flags() {
+        for flag in ["--state", "--model", "--dry-run", "--value"] {
+            let error = parse(&["decide", "auth", "set", flag, "x"])
+                .or_else(|_| parse(&["decide", "auth", "set", flag]))
+                .expect_err("auth has no request to shape");
+            assert_eq!(
+                error.kind(),
+                ErrorKind::UnknownArgument,
+                "{flag} should be absent from auth, not ignored"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_takes_no_credential_flag_either() {
+        let error = parse(&["decide", "auth", "set", "--api-key", "sekrit"])
+            .expect_err("the token is read from stdin");
+
+        assert_eq!(error.kind(), ErrorKind::UnknownArgument);
+    }
+
+    #[test]
     fn global_flags_are_accepted_before_or_after_the_subcommand() {
         let before = accepted(&[
             "decide",
@@ -572,7 +696,8 @@ mod tests {
     fn the_global_defaults_are_the_documented_ones() {
         let cli = accepted(&["decide", "models"]);
 
-        assert_eq!(cli.global.base_url, "https://api.typesafe.ai");
+        assert_eq!(cli.global.base_url, crate::wire::DEFAULT_BASE_URL);
+        assert_eq!(cli.global.base_url, "https://api.typesafe.ai/v1/systemone");
         assert_eq!(cli.global.timeout, 60);
         assert_eq!(cli.global.retries, 2);
         assert_eq!(cli.global.backoff_ms, 500);
@@ -602,6 +727,13 @@ mod tests {
     #[test]
     fn models_has_no_evaluation_flags_at_all() {
         let cli = accepted(&["decide", "models"]);
+
+        assert!(cli.command.eval().is_none());
+    }
+
+    #[test]
+    fn auth_asks_no_question() {
+        let cli = accepted(&["decide", "auth", "status"]);
 
         assert!(cli.command.eval().is_none());
     }

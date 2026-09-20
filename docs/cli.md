@@ -15,6 +15,7 @@ decide [GLOBAL] noul   <INSTRUCTION> [EVAL] --id NAME [--yes DESC] [--no DESC]
 decide [GLOBAL] choice <INSTRUCTION> [EVAL] --id NAME --option NAME[=DESC]…
 decide [GLOBAL] score  <INSTRUCTION> [EVAL] --id NAME --level DESC…
 decide [GLOBAL] models
+decide [GLOBAL] auth   set | unset | status
 ```
 
 A bare `decide`, or `decide` with an unrecognised argument, prints the help on stderr and
@@ -328,6 +329,37 @@ $ decide models --select models.0.name
 jev-latest
 ```
 
+### `auth`
+
+Keeps the credential, so that a shell profile does not have to hold it. It takes the global
+flags and none of the evaluation flags: there is no state to send and no body to show.
+
+| Action | Does |
+|---|---|
+| `auth set` | reads a token from stdin and stores it, readable only by its owner |
+| `auth status` | prints which source supplies the credential, and never the value |
+| `auth unset` | removes the stored token |
+
+```console
+$ printf %s "$TOKEN" | decide auth set
+stored the token in "/home/you/.config/decide/api-key"
+
+$ decide auth status
+TYPESAFE_API_KEY
+```
+
+The token is read from **stdin** and never from a flag, for the reason there is no
+`--api-key` ([D5](design.md#d5-the-credential-never-comes-from-argv)):
+`argv` is readable by every process on the machine and is kept in shell history. A terminal
+is refused rather than read, because a secret typed at a prompt is echoed to the screen —
+`printf %s "$TOKEN" | decide auth set`, or `decide auth set < key.txt`, is the way in.
+
+`set` and `unset` confirm on stderr and write nothing to stdout, because they are actions;
+`status` prints its one line on stdout, because it is a question. `status` is exit `0` even
+when nothing is configured — that is the fact it was asked for — and names the path a store
+would use. It reports an unreadable `--api-key-file` as the error it is, rather than
+claiming there is no credential.
+
 ## Flags
 
 The set is split by one question: does the flag apply to *every* subcommand's response?
@@ -340,7 +372,7 @@ not accepted at all, which is the same rule the state follows.
 
 | Flag | Default | Environment | Notes |
 |---|---|---|---|
-| `--base-url URL` | `https://api.typesafe.ai` | `TYPESAFE_BASE_URL` | Must begin with `http://` or `https://`. A trailing `/` is trimmed, so `/v1/systemone` is never appended to a base that already ends in one. |
+| `--base-url URL` | `https://api.typesafe.ai/v1/systemone` | `TYPESAFE_BASE_URL` | Must begin with `http://` or `https://`. Both the API root and the full `/v1/systemone` endpoint are accepted — the default is the endpoint, because that is the URL the API documentation shows — and either reduces to the root, so `/v1/systemone` is never appended twice and `GET /v1/models` stays a sibling of the `POST`. A trailing `/` is trimmed. |
 | `--api-key-file PATH` | — | `TYPESAFE_API_KEY_FILE` | The key, read from a file. One trailing newline is stripped, so a file written by `echo` works. |
 | `--timeout SECONDS` | `60` | — | Bounds **one attempt**. Must be at least 1; `0` is refused rather than meaning "forever". The worst case for a call is `(1 + --retries) × --timeout`. |
 | `--retries N` | `2` | — | At most 10. `--retries 0` makes the call a single attempt. |
@@ -370,16 +402,32 @@ is sent, and `models` sends no body to name a model in.
 |---|---|
 | `TYPESAFE_API_KEY` | The credential. Required for every subcommand except `--dry-run`. |
 | `TYPESAFE_API_KEY_FILE` | A file holding the credential, for a secret mounted where `argv` and `env` cannot carry one. It is read only when `TYPESAFE_API_KEY` is unset or empty, so a key in the environment is never a silent fallback for a file that cannot be read. |
-| `TYPESAFE_BASE_URL` | The API root. Overridden by `--base-url`. |
+| `TYPESAFE_BASE_URL` | The API root, or the `/v1/systemone` endpoint in full. Overridden by `--base-url`. |
 | `TYPESAFE_DEFAULT_MODEL` | The model when neither `--model` nor the document names one. Default `jev-latest`. |
 
+### Where the credential comes from
+
+Three sources, in this order, and the first one that supplies a key wins:
+
+| Order | Source |
+|---|---|
+| 1 | `TYPESAFE_API_KEY` |
+| 2 | `--api-key-file PATH`, or `TYPESAFE_API_KEY_FILE` |
+| 3 | the store `decide auth set` writes: `$XDG_CONFIG_HOME/decide/api-key`, or `~/.config/decide/api-key` |
+
+The environment is first so that a script, a CI runner, or a colleague's debugging session
+can override what is stored without having to unset anything first. The named file is
+second because naming a file is a decision, and the store is a *default* rather than a
+decision. A named file that cannot be read is an error rather than a silent fall through to
+the store: the caller said where the key is, and it is not there.
+
 There is no `--api-key`
-([D5](design.md#d5-the-credential-comes-from-the-environment-never-from-argv)). A missing
+([D5](design.md#d5-the-credential-never-comes-from-argv)). A missing
 credential is exit `2` and is reported before any connection is opened, so a script learns
 about it in milliseconds rather than after a timeout.
 
 `TYPESAFE_LOG_LEVEL` is deliberately not read
-([D13](design.md#d13-no-configuration-file-and-no-typesafe_log_level)).
+([D13](design.md#d13-one-credential-store-and-still-no-configuration-file)).
 
 ## Exit codes
 
@@ -409,10 +457,12 @@ Commands:
   choice  Ask for one option out of a set you define
   score   Ask for a position along levels you define
   models  List the models this account can send
+  auth    Store the API token, so that an environment variable is not needed
   help    Print this message or the help of the given subcommand(s)
 
 Options:
-      --base-url <URL>        API root [env: TYPESAFE_BASE_URL] [default: https://api.typesafe.ai]
+      --base-url <URL>        The API endpoint, or the root it lives under [env: TYPESAFE_BASE_URL]
+                             [default: https://api.typesafe.ai/v1/systemone]
       --api-key-file <PATH>   Read the API key from a file [env: TYPESAFE_API_KEY_FILE]
       --timeout <SECONDS>     Give up on one attempt after this long [default: 60]
       --retries <N>           Retry a failed attempt this many times, at most 10 [default: 2]
@@ -446,9 +496,13 @@ Examples:
   Ask about a document that arrived on stdin, with no state in the questions file:
       cat ticket.txt | decide ask questions.json --select answers.department.choice
 
-The API key is read from TYPESAFE_API_KEY, or from the file named by
-TYPESAFE_API_KEY_FILE. It is not read from a flag: a flag is visible to every process on
-the machine and is kept in the shell's history.
+  Store the API token, so that an environment variable is not needed:
+      printf %s "$TOKEN" | decide auth set
+
+The API key is read from TYPESAFE_API_KEY, from a file named by --api-key-file or
+TYPESAFE_API_KEY_FILE, or from the store that `decide auth set` writes. It is never read
+from a flag: a flag is visible to every process on the machine, and it is kept in the
+shell's history.
 
 stdout carries the response and nothing else. Progress and errors go to stderr.
 Exit codes: 0 the evaluation completed, 1 it failed, 2 the invocation is wrong.

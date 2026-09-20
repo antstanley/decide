@@ -138,6 +138,28 @@ fn a_trailing_slash_in_the_base_url_does_not_double_the_path() {
 }
 
 #[test]
+fn a_base_url_naming_the_endpoint_in_full_calls_the_same_two_paths() {
+    let server = FakeServer::start(vec![Reply::json(ANSWER), Reply::json("{}")]);
+    let mut progress = Vec::new();
+    let mut config = config(&server, 0);
+    // What the default is, and what a caller who pasted the documented URL would pass.
+    config.base_url = input::resolve_base_url(&format!("{}/v1/systemone", server.url()))
+        .expect("a base URL with a scheme is accepted");
+
+    client::post_systemone(&config, &body(), &mut progress).expect("the call");
+    client::get_models(&config, &mut progress).expect("the call");
+
+    let seen = server.seen();
+    let posted = seen.first().expect("the POST was seen");
+    let listed = seen.get(1).expect("the GET was seen");
+    assert_eq!(posted.path, "/v1/systemone", "no doubled path segment");
+    assert_eq!(
+        listed.path, "/v1/models",
+        "models stays a sibling of the endpoint, not a child of it"
+    );
+}
+
+#[test]
 fn a_rate_limit_is_retried_after_the_retry_after_header() {
     let server = FakeServer::start(vec![
         Reply::status(429, "slow down").with_header("Retry-After", "0"),

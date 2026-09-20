@@ -31,6 +31,14 @@ pub const MAX_SCORE_LEVELS: usize = 10;
 /// The model a request names when neither `--model` nor the document does.
 pub const DEFAULT_MODEL: &str = "jev-latest";
 
+/// The API root every call is built on, when nothing names another one.
+///
+/// It is spelled as the evaluation endpoint rather than as the bare host, because that is
+/// the URL a caller reads out of the API documentation and pastes into `--base-url`;
+/// [`crate::input::resolve_base_url`] reduces either spelling to the root the two calls are
+/// built from.
+pub const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai/v1/systemone";
+
 /// The keys a request document may carry, as the error message lists them.
 const REQUEST_KEYS: &str = "\"state\", \"model\", \"questions\"";
 

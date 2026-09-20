@@ -51,7 +51,8 @@ rightmost column is the one to read first.
 | `lib.rs` | the crate docs and its runnable example, `Io`, `run()`, the glue between modules | every test |
 | `cli.rs` | the clap types and the help text; the only module that knows about `argv` | `cli::tests`, `tests/help.rs` |
 | `wire.rs` | the request and response shapes, the limit constants, validation | `wire::tests`, `tests/run.rs` |
-| `input.rs` | `Stdin`, the state rules, reading a document, the flags-to-question builder | `input::tests` |
+| `input.rs` | `Stdin`, the state rules, reading a document, the flags-to-question builder, the base URL | `input::tests` |
+| `config.rs` | the stored credential: its path, its file, and which of the three sources supplies it | `config::tests`, `tests/binary.rs` |
 | `client.rs` | the agent, the auth header, one attempt, the retry loop, the error-body cap | `client::tests`, `tests/transport.rs` |
 | `report.rs` | path selection and rendering; no I/O at all | `report::tests`, `tests/run.rs` |
 | `error.rs` | `DecideError`, its `Display`, and its exit code | `error::tests` |
@@ -251,6 +252,19 @@ claims live in `tests/run.rs` and `tests/binary.rs`.
   `print_stderr` is denied everywhere and `--verbose` has to be assertable in a unit test.
 - **An error body is capped** at the constant in `client.rs`, read through a bounded reader,
   so a server that answers with a novel cannot become an allocation.
+- **The credential has three sources, and the order is a decision.** `TYPESAFE_API_KEY`,
+  then a named file, then the store `decide auth set` writes. The environment is first so a
+  script can override what a developer stored without unsetting anything; a *named* file
+  that cannot be read is an error rather than a fall through, because the caller said where
+  the key is. `config.rs` holds all of it.
+- **The one file `decide` writes is the credential, not a config file.** It is a token in a
+  file — not parsed, not merged, mode 0600 — and adding a second key to it is the point at
+  which [D13](docs/design.md#d13-one-credential-store-and-still-no-configuration-file)'s
+  objection becomes true again.
+- **`--base-url` accepts the root and the endpoint in full.** `input::resolve_base_url`
+  strips a trailing `/v1/systemone` before anything else looks at it, so the documented URL
+  can be pasted in and `GET /v1/models` stays a sibling of the `POST`. Only that exact
+  suffix is recognised, so a proxy path of your own is left alone.
 
 ## How to make common changes
 
@@ -268,6 +282,12 @@ which is the reason the enum is closed.
 **A documented limit changes.** Change the constant in `wire.rs`, the table in
 [`docs/api.md`](docs/api.md#limits), and the test at the boundary in both directions.
 A limit is never changed in one place only.
+
+**The credential changes.** It is `config.rs` — the path, the file, and the order in
+`config::resolve` — plus the table in [`docs/cli.md`](docs/cli.md#where-the-credential-comes-from),
+[D5](docs/design.md#d5-the-credential-never-comes-from-argv) and
+[D13](docs/design.md#d13-one-credential-store-and-still-no-configuration-file), and the
+tests in both directions: what wins, what is refused, and what is never printed.
 
 **The retry policy changes.** Change it in `client.rs`, the table in
 [`docs/api.md`](docs/api.md#retries), the flag defaults in [`docs/cli.md`](docs/cli.md), and

@@ -47,6 +47,7 @@
 
 pub mod cli;
 pub mod client;
+pub mod config;
 pub mod error;
 pub mod input;
 pub mod report;
@@ -54,10 +55,11 @@ pub mod wire;
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
+use std::path::Path;
 
 use serde_json::Value;
 
-pub use cli::{Cli, Command, EvalArgs, GlobalArgs};
+pub use cli::{AuthCommand, Cli, Command, EvalArgs, GlobalArgs};
 pub use error::DecideError;
 pub use input::Stdin;
 
@@ -88,7 +90,76 @@ pub fn run<In: Read, Out: Write, Err: Write>(
 ) -> Result<(), DecideError> {
     match &cli.command {
         Command::Models => run_models(cli, io),
+        Command::Auth { command } => run_auth(cli, command, io),
         _ => run_eval(cli, io),
+    }
+}
+
+/// The `auth` actions: the one thing this program writes for a caller.
+fn run_auth<In: Read, Out: Write, Err: Write>(
+    cli: &Cli,
+    command: &AuthCommand,
+    io: &mut Io<In, Out, Err>,
+) -> Result<(), DecideError> {
+    let path = config::path().ok_or(DecideError::NoCredentialStore)?;
+    let environment = std::env::var("TYPESAFE_API_KEY").ok();
+    auth_at(command, &path, environment.as_deref(), &cli.global, io)
+}
+
+/// The `auth` actions, against a store at a known path.
+///
+/// The path is a parameter rather than a lookup so that every branch below — including the
+/// file mode — is a unit test in a temporary directory rather than a change to the
+/// developer's own home.
+fn auth_at<In: Read, Out: Write, Err: Write>(
+    command: &AuthCommand,
+    path: &Path,
+    environment: Option<&str>,
+    global: &GlobalArgs,
+    io: &mut Io<In, Out, Err>,
+) -> Result<(), DecideError> {
+    match command {
+        AuthCommand::Set => {
+            let token = config::read_token(&mut io.stdin)?;
+            config::store_at(path, &token)?;
+            // The confirmation is a diagnostic, so it goes to stderr: stdout stays empty
+            // for every subcommand that does not print a result.
+            note(
+                &mut io.stderr,
+                &format!("stored the token in \"{}\"", path.display()),
+            )
+        }
+        AuthCommand::Unset => {
+            if config::clear_at(path)? {
+                note(
+                    &mut io.stderr,
+                    &format!("removed the token from \"{}\"", path.display()),
+                )
+            } else {
+                note(&mut io.stderr, "there was no stored token")
+            }
+        }
+        AuthCommand::Status => {
+            let source = config::resolve(
+                environment.map(str::to_string),
+                global.api_key_file.as_deref(),
+                Some(path),
+            );
+            match source {
+                Ok((source, _)) => emit(&mut io.stdout, &source.describe()),
+                // Nothing configured is a fact to report, not a failure to raise: this is
+                // the command a caller runs to find out why a call failed.
+                Err(DecideError::MissingApiKey) => emit(
+                    &mut io.stdout,
+                    &format!(
+                        "no credential is configured; `decide auth set` would store one in \
+                         \"{}\"",
+                        path.display()
+                    ),
+                ),
+                Err(other) => Err(other),
+            }
+        }
     }
 }
 
@@ -230,9 +301,9 @@ fn prepare<In: Read>(command: &Command, stdin: &mut Stdin<In>) -> Result<Prepare
             id,
             input::score_question(instruction, level),
         )),
-        // `models` asks no question; `run` sends it to `run_models` first, so this is a
-        // fallback rather than a path, and the request validator refuses it by name.
-        Command::Models => Ok(Prepared {
+        // `models` and `auth` ask no question; `run` sends them elsewhere first, so this
+        // is a fallback rather than a path, and the request validator refuses it by name.
+        Command::Models | Command::Auth { .. } => Ok(Prepared {
             questions: BTreeMap::new(),
             document_state: None,
             document_model: None,
@@ -253,12 +324,15 @@ fn state_args(eval: &EvalArgs) -> input::StateArgs<'_> {
 
 /// Everything a call needs, credential included.
 fn client_config(global: &GlobalArgs) -> Result<client::ClientConfig, DecideError> {
+    let stored = config::path();
+    let (_, api_key) = config::resolve(
+        std::env::var("TYPESAFE_API_KEY").ok(),
+        global.api_key_file.as_deref(),
+        stored.as_deref(),
+    )?;
     Ok(client::ClientConfig {
         base_url: input::resolve_base_url(&global.base_url)?,
-        api_key: client::resolve_api_key(
-            std::env::var("TYPESAFE_API_KEY").ok(),
-            global.api_key_file.as_deref(),
-        )?,
+        api_key,
         timeout_secs: global.timeout,
         retries: global.retries,
         backoff_ms: global.backoff_ms,
@@ -291,6 +365,15 @@ fn render_response(
     Ok(report::render_json(&response.value, global.pretty))
 }
 
+/// Write one diagnostic line, which never changes stdout.
+fn note<Err: Write>(err: &mut Err, text: &str) -> Result<(), DecideError> {
+    writeln!(err, "{text}")
+        .and_then(|()| err.flush())
+        .map_err(|error| DecideError::Output {
+            reason: error.to_string(),
+        })
+}
+
 /// Write the output, once, whole, and with the trailing newline a shell expects.
 fn emit<Out: Write>(out: &mut Out, text: &str) -> Result<(), DecideError> {
     out.write_all(text.as_bytes())
@@ -304,6 +387,7 @@ fn emit<Out: Write>(out: &mut Out, text: &str) -> Result<(), DecideError> {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::path::PathBuf;
 
     use clap::Parser as _;
     use serde_json::{Value, json};
@@ -334,7 +418,7 @@ mod tests {
     }
 
     /// A request document in a temporary file, and the directory that keeps it alive.
-    fn document(text: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    fn document(text: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let path = dir.path().join("questions.json");
         std::fs::write(&path, text).expect("write the document");
@@ -344,6 +428,175 @@ mod tests {
     /// The request body a dry run printed, as a value.
     fn printed_request(outcome: &Run) -> Value {
         serde_json::from_str(outcome.stdout.trim_end()).expect("the dry run printed JSON")
+    }
+
+    /// A store path in a temporary directory that does not exist yet.
+    fn store_path() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("decide").join("api-key");
+        (dir, path)
+    }
+
+    /// The global flags with nothing taken from the environment, for the `auth` tests.
+    ///
+    /// Built by hand rather than parsed, because `cli` reads `TYPESAFE_*` for the values it
+    /// is not given, and a test that reads the developer's shell is not a test.
+    fn plain_global() -> GlobalArgs {
+        GlobalArgs {
+            base_url: wire::DEFAULT_BASE_URL.to_string(),
+            api_key_file: None,
+            timeout: 60,
+            retries: 2,
+            backoff_ms: 500,
+            select: None,
+            pretty: false,
+            verbose: false,
+        }
+    }
+
+    /// Run one `auth` action against a store at a known path.
+    fn auth(command: &AuthCommand, path: &Path, stdin_text: &str, terminal: bool) -> Run {
+        auth_with(command, path, stdin_text, terminal, None)
+    }
+
+    /// The same, with a credential in the environment.
+    fn auth_with(
+        command: &AuthCommand,
+        path: &Path,
+        stdin_text: &str,
+        terminal: bool,
+        environment: Option<&str>,
+    ) -> Run {
+        let mut io = Io {
+            stdin: Stdin::new(Cursor::new(stdin_text.as_bytes().to_vec()), terminal),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        let global = plain_global();
+        let result = auth_at(command, path, environment, &global, &mut io);
+        Run {
+            stdout: String::from_utf8(io.stdout).expect("stdout is text"),
+            stderr: String::from_utf8(io.stderr).expect("stderr is text"),
+            result,
+        }
+    }
+
+    #[test]
+    fn auth_set_stores_what_it_reads_from_stdin() {
+        let (_dir, path) = store_path();
+
+        let outcome = auth(&AuthCommand::Set, &path, "sekrit-token\n", false);
+
+        assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+        assert!(outcome.stdout.is_empty(), "a confirmation is not a result");
+        assert!(
+            outcome.stderr.contains(&path.display().to_string()),
+            "{:?}",
+            outcome.stderr
+        );
+        assert_eq!(
+            config::load_at(&path).expect("readable"),
+            Some("sekrit-token".to_string())
+        );
+    }
+
+    #[test]
+    fn auth_set_refuses_a_terminal_rather_than_echoing_a_secret() {
+        let (_dir, path) = store_path();
+
+        let outcome = auth(&AuthCommand::Set, &path, "sekrit-token\n", true);
+
+        let error = outcome.result.expect_err("a terminal is refused");
+        assert_eq!(error.exit_code(), 2);
+        assert!(!path.exists(), "nothing was stored");
+        assert!(outcome.stdout.is_empty());
+    }
+
+    #[test]
+    fn auth_set_refuses_an_empty_token() {
+        let (_dir, path) = store_path();
+
+        let outcome = auth(&AuthCommand::Set, &path, "   \n", false);
+
+        let error = outcome.result.expect_err("nothing to store");
+        assert!(error.to_string().contains("empty"), "{error}");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn auth_unset_removes_what_was_stored_and_says_so() {
+        let (_dir, path) = store_path();
+        config::store_at(&path, "sekrit-token").expect("writable");
+
+        let outcome = auth(&AuthCommand::Unset, &path, "", true);
+
+        assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+        assert!(!path.exists(), "the token is gone");
+        assert!(outcome.stderr.contains("removed"), "{:?}", outcome.stderr);
+        assert!(outcome.stdout.is_empty());
+    }
+
+    #[test]
+    fn auth_unset_says_when_there_was_nothing_to_remove() {
+        let (_dir, path) = store_path();
+
+        let outcome = auth(&AuthCommand::Unset, &path, "", true);
+
+        assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+        assert!(
+            outcome.stderr.contains("no stored token"),
+            "{:?}",
+            outcome.stderr
+        );
+    }
+
+    #[test]
+    fn auth_status_names_the_store_without_printing_the_token() {
+        let (_dir, path) = store_path();
+        config::store_at(&path, "sekrit-token").expect("writable");
+
+        let outcome = auth(&AuthCommand::Status, &path, "", true);
+
+        assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+        assert!(
+            outcome.stdout.contains(&path.display().to_string()),
+            "{}",
+            outcome.stdout
+        );
+        assert!(!outcome.stdout.contains("sekrit-token"), "never the value");
+    }
+
+    #[test]
+    fn auth_status_names_the_environment_when_it_supplies_the_credential() {
+        let (_dir, path) = store_path();
+        config::store_at(&path, "stored-token").expect("writable");
+
+        let outcome = auth_with(&AuthCommand::Status, &path, "", true, Some("env-token"));
+
+        assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+        assert_eq!(outcome.stdout, "TYPESAFE_API_KEY\n", "the environment wins");
+        assert!(!outcome.stdout.contains(&path.display().to_string()));
+        assert!(!outcome.stdout.contains("env-token"), "never the value");
+        assert!(!outcome.stdout.contains("stored-token"), "never the value");
+    }
+
+    #[test]
+    fn auth_status_reports_nothing_configured_rather_than_failing() {
+        let (_dir, path) = store_path();
+
+        let outcome = auth(&AuthCommand::Status, &path, "", true);
+
+        assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+        assert!(
+            outcome.stdout.contains("no credential"),
+            "{}",
+            outcome.stdout
+        );
+        assert!(
+            outcome.stdout.contains("decide auth set"),
+            "{}",
+            outcome.stdout
+        );
     }
 
     #[test]

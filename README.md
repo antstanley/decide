@@ -28,17 +28,33 @@ cargo build --release          # target/release/decide
 Latest stable Rust, pinned in [`rust-toolchain.toml`](rust-toolchain.toml). There is no
 runtime beside the binary, no configuration file, and nothing to install first.
 
-The credential comes from the environment, never from a flag — `argv` is readable by every
-process on the machine, and it is kept in shell history and in agent transcripts:
+### The credential
+
+Store it once, and no environment variable is needed:
 
 ```sh
-export TYPESAFE_API_KEY=…                         # or, for a mounted secret:
-export TYPESAFE_API_KEY_FILE=/run/secrets/jev     # the file is read only if the
-                                                  # variable above is unset or empty
+printf %s "$TOKEN" | decide auth set
+decide auth status        # which source supplies the credential, never the value
+decide auth unset         # forget it again
 ```
 
-`TYPESAFE_BASE_URL` overrides the API root, and `TYPESAFE_DEFAULT_MODEL` names the model
-when neither `--model` nor the request document does.
+`auth set` reads the token from **stdin** and never from a flag — `argv` is readable by
+every process on the machine, and it is kept in shell history and in agent transcripts. It
+writes one file, readable only by its owner, at `$XDG_CONFIG_HOME/decide/api-key` (or
+`~/.config/decide/api-key`). A terminal is refused rather than read, because a secret typed
+at a prompt is echoed to the screen.
+
+Three sources, in this order, and the first one that supplies a key wins:
+
+| Order | Source |
+|---|---|
+| 1 | `TYPESAFE_API_KEY` |
+| 2 | `--api-key-file PATH`, or `TYPESAFE_API_KEY_FILE` — a secret mounted as a file |
+| 3 | the store `decide auth set` writes |
+
+The environment is first so that a script or a CI runner can override what is stored for
+one call. `TYPESAFE_DEFAULT_MODEL` names the model when neither `--model` nor the request
+document does.
 
 ## The two shapes
 
@@ -141,14 +157,28 @@ A text state with no non-whitespace character is refused — that is what a pipe
 delivered nothing looks like — and `--state-json` refuses a number or a boolean by name,
 because the API accepts a string, an object, or an array.
 
+### The API root
+
+`--base-url` and `TYPESAFE_BASE_URL` accept either the root or the endpoint in full, so the
+URL in the API documentation can be pasted straight in:
+
+```sh
+decide models --base-url https://api.typesafe.ai/v1/systemone   # the default, in full
+decide models --base-url https://api.typesafe.ai               # the same root
+```
+
+Both reduce to the root the two calls are built from, so the path is never doubled and
+`GET /v1/models` stays a sibling of the `POST`.
+
 ## What it does not do
 
 - **No threshold, weighting, or combining of answers.** A threshold hidden inside a CLI is
   a default nobody chose; it belongs in your script, where a reviewer can find it.
 - **No batching over states.** The API batches *questions*; forty documents are forty
   invocations, and `xargs -P4` is already the scheduler for that.
-- **No configuration file.** Every setting is a flag, and the script is the file that
-  records how it is called.
+- **No configuration file beyond the credential.** Every *setting* is a flag, and the
+  script is the file that records how it is called; the one file `decide` writes holds the
+  token, which is a secret rather than a setting.
 - **No `--api-key`.** See the credential section above.
 - **No streaming.** The API does not stream, so there is nothing to stream.
 

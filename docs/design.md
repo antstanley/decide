@@ -47,8 +47,9 @@ aspirations:
 3. **Fast to call correctly, from a one-liner or a script.** The two shapes in the
    synopsis exist because those are the two real uses: one question asked once, and a
    stable set of questions asked of many states.
-4. **Small.** One binary, five dependencies, no runtime, no configuration file, nothing
-   to install beside it. It should be auditable in one sitting.
+4. **Small.** One binary, five dependencies, no runtime, nothing to install beside it,
+   and one file it writes for you — the credential, and nothing else. It should be
+   auditable in one sitting.
 
 ## Non-goals
 
@@ -157,20 +158,36 @@ contract, so nothing is lost by sorting; and a sorted body is byte-stable across
 which is what makes the output comparable, diffable, and testable without a canonicalising
 comparison.
 
-### D5. The credential comes from the environment, never from `argv`
+### D5. The credential never comes from `argv`
 
-`TYPESAFE_API_KEY`, or `TYPESAFE_API_KEY_FILE` for a secret mounted as a file. There is no
-`--api-key`.
+`TYPESAFE_API_KEY`, a file named by `--api-key-file` or `TYPESAFE_API_KEY_FILE`, or the
+store that `decide auth set` writes. There is no `--api-key`.
 
 `argv` is readable by every process on the machine (`ps`, `/proc/<pid>/cmdline`), and it is
 written to shell history and to the transcripts of the agents this tool is built to be
 called by. A flag that puts a credential there is a flag that will be used, because it is
 convenient. The SDKs read the environment for the same reason; `decide` reads what they
-read.
+read. It is also why `decide auth set` reads the token from **stdin**: a command that takes
+a secret as an argument is a command that puts it in `ps`, which would be this decision
+broken by the command that exists to honour it.
 
 `TYPESAFE_API_KEY_FILE` earns its place for the same reason in reverse: a container or a CI
 runner mounts a secret as a file, and the alternative is a wrapper script that exists only
 to move a file's contents into the environment.
+
+The store earns its place for a third version of the same reason. The environment is not a
+home for a credential on a developer's machine: an `export` in a shell profile is inherited
+by every process that shell ever starts, and it is the first thing an agent's transcript
+captures. One file, readable only by its owner, is the smallest thing that fixes both — and
+the environment still wins over it, so a script or a CI runner overrides what is stored
+without having to unset anything. The precedence is in
+[`cli.md`](cli.md#where-the-credential-comes-from); the file itself is
+[D13](#d13-one-credential-store-and-still-no-configuration-file).
+
+*Rejected:* `--api-key`, for the reason above. *Rejected:* prompting for the token with echo
+turned off. Doing it honestly needs a terminal-handling dependency, and it cannot be tested
+without a pseudo-terminal — so the pipe is the instruction, as it is for
+`gh auth login --with-token`.
 
 ### D6. Two forms for the questions: flags for one, a document for many
 
@@ -320,21 +337,37 @@ GET has no body to show. Its output is the *re-serialised* request, not the docu
 was read: it shows what would go on the wire, including the resolved model and the
 canonical key order.
 
-### D13. No configuration file, and no `TYPESAFE_LOG_LEVEL`
+### D13. One credential store, and still no configuration file
 
-Every setting is a flag or one of the three documented environment variables. There is
-no `decide.toml`, no `$XDG_CONFIG_HOME` lookup, and no config version to migrate.
+Every setting is a flag or one of the documented environment variables, with one exception:
+the API token, which `decide auth set` writes to `$XDG_CONFIG_HOME/decide/api-key`, or to
+`~/.config/decide/api-key` when that variable is unset.
 
 A configuration file is a second place a setting can come from, and therefore a second
-place to look when a script behaves differently on a colleague's machine. The settings
-here are few, they differ per invocation rather than per person, and the *script* is
-already the file that records them. `TYPESAFE_LOG_LEVEL` is unused for the same kind of
-reason: it configures a library's logger, and a program with one flag that means "say
-what you are doing on stderr" does not need a second, differently-behaved way to ask.
+place to look when a script behaves differently on a colleague's machine. The settings here
+are few, they differ per invocation rather than per person, and the *script* is already the
+file that records them — so none of them is in a file. The credential is the exception
+because it is not a setting: it is a secret with one correct value, and both of its other
+homes are worse. `argv` is shown in `ps` and kept in shell history
+([D5](#d5-the-credential-never-comes-from-argv)), and a variable exported from a shell
+profile is inherited by every process that shell starts, including ones with no business
+holding it.
 
-*Rejected:* a config file for the defaults a user always passes. It would save typing in
-an interactive session and add a hidden input to every script — and this tool's callers
-are scripts.
+The file is a token in a file rather than a format: one setting, not parsed, not merged
+with anything, and created readable only by its owner. That is what keeps this from being
+the configuration file the rest of this decision refuses — a *second* key in it would be
+the point at which the objection bites, and the point at which this decision needs
+revisiting. `TYPESAFE_LOG_LEVEL` is still unused for the original reason: it configures a
+library's logger, and a program with one flag that means "say what you are doing on stderr"
+does not need a second, differently-behaved way to ask.
+
+*Rejected:* a config file for the defaults a user always passes. It would save typing in an
+interactive session and add a hidden input to every script — and this tool's callers are
+scripts. *Rejected:* a keychain or credential helper (`security find-generic-password` on
+macOS, libsecret elsewhere). It puts the secret somewhere better, at the cost of a
+dependency and a per-platform implementation of something one file does portably.
+*Rejected:* a `.env` file in the working directory, which is a hidden input that depends on
+where the command was run from.
 
 ### D14. All I/O is injected, so nothing in the crate prints
 
@@ -430,6 +463,9 @@ src/
   input.rs     where the parts of a request come from: the state resolution
                rules of D7, the document parse, the flags-to-question builder of
                D6. Holds Stdin, so the terminal branch is testable.
+  config.rs    the one file decide writes: where the credential is stored, how
+               it is read and written, which of the three sources supplies it,
+               and the stdin rule for `auth set`.
   client.rs    the transport: the ureq agent, the auth header, one attempt, the
                retry loop of D10, status handling, and the error-body cap.
   report.rs    what comes back: the Outcome of a run, path selection, and
