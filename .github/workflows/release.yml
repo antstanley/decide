@@ -147,6 +147,16 @@ jobs:
           ./rustup-init -y --profile minimal --default-toolchain stable
           echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
 
+      - name: Install the musl toolchain
+        # The musl targets carry their own libc, but not a C compiler, and `ring` compiles C.
+        # Without this, cc-rs looks for `x86_64-linux-musl-gcc` and fails the build.
+        if: contains(matrix.target, 'linux-musl')
+        shell: bash
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
       - name: Add the target
         shell: bash
         run: rustup target add ${{ matrix.target }}
