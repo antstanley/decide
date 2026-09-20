@@ -338,6 +338,7 @@ flags and none of the evaluation flags: there is no state to send and no body to
 |---|---|
 | `auth set` | asks for a token when a person is running it, reads a pipe when a script is, and stores it readable only by its owner |
 | `auth status` | prints which source supplies the credential, and never the value |
+| `auth status --check` | the same, plus one call that asks the API whether it accepts the key |
 | `auth unset` | removes the stored token |
 
 ```console
@@ -350,6 +351,9 @@ stored the token in "/home/you/.config/decide/api-key"
 
 $ decide auth status
 TYPESAFE_API_KEY
+
+$ decide auth status --check
+TYPESAFE_API_KEY: the API accepted it
 ```
 
 The token is typed at a prompt, which does not echo it, or read from a **pipe** when stdin
@@ -365,6 +369,26 @@ output starts where it should.
 when nothing is configured — that is the fact it was asked for — and names the path a store
 would use. It reports an unreadable `--api-key-file` as the error it is, rather than
 claiming there is no credential.
+
+`--check` adds the other half of the question: whether the API accepts the key. Without it
+`status` touches nothing outside this machine, which is what makes it the first thing to run
+when a call has already failed. With it, one `GET /v1/models` is made with the credential
+that was found — the same bearer token, and unlike an evaluation it spends no tokens, so it
+is cheap enough to run after every `auth set`. `--timeout`, `--retries`, and `--backoff-ms`
+apply to it as they do to any call.
+
+The verdict goes on stdout after the source, and the exit code is the call's: `0` when the
+API accepted the key, `1` when it refused it — a `401` is reported as the `401` it is, with
+the status and the body, exactly as any other call reports one — or when the check could not
+be made at all (a transport failure, a `5xx` after the retries, a `200` that is not the
+API's answer). So the script is the one a caller already knows:
+
+```sh
+decide auth status --check || exit 1
+```
+
+With no credential to check, `--check` is the missing-credential error: exit `2`, an empty
+stdout, and the same message every other subcommand gives.
 
 ## Flags
 

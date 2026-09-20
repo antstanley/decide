@@ -190,6 +190,40 @@ fn a_stored_token_is_used_when_the_environment_has_none() {
 }
 
 #[test]
+fn auth_status_check_exercises_the_stored_key() {
+    let server = FakeServer::start(vec![Reply::json(include_str!("data/models.json"))]);
+    let home = tempfile::tempdir().expect("a temporary home");
+    assert_eq!(
+        code(&decide_in_home(
+            &["auth", "set"],
+            home.path(),
+            "stored-token\n"
+        )),
+        0
+    );
+
+    let checked = decide_in_home(
+        &["auth", "status", "--check", "--base-url", &server.url()],
+        home.path(),
+        "",
+    );
+
+    assert_eq!(code(&checked), 0, "stderr: {}", text(&checked.stderr));
+    assert!(
+        text(&checked.stdout).contains("the API accepted it"),
+        "{}",
+        text(&checked.stdout)
+    );
+    let seen = server.seen();
+    let request = seen.first().expect("one request was seen");
+    assert_eq!(
+        request.header("authorization"),
+        Some("Bearer stored-token"),
+        "the check used the stored credential, with no environment variable set"
+    );
+}
+
+#[test]
 fn auth_status_reports_where_the_credential_comes_from_without_printing_it() {
     let home = tempfile::tempdir().expect("a temporary home");
 

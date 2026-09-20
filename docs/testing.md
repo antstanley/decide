@@ -164,6 +164,7 @@ Every row is a test that exists with both halves.
 | stdout is the response | The exact bytes, compact and pretty | A failed run leaves stdout empty; `--verbose` does not change stdout |
 | A selected value is a usable value | `--select` into an object, an array, a number, a bool; `--value`; `--field confidence` | A path that misses names the segment and the available keys; `--value` on a three-question request is refused; `--value` and `--field` together are refused |
 | A credential is found without an environment variable | Each of the three sources alone, in that order; a stored token used by a real call through the built binary | No source at all; a named file that cannot be read; `auth set` with an empty pipe and with nothing typed; `auth status` never printing the value |
+| The key can be exercised without being printed | `auth status --check` reads `/v1/models` with the credential and says the API accepted it | A `401` is the status error it is; a `200` that is not the API's answer is refused; a check with nothing listening reports the attempt count; `status` alone makes no call at all |
 | A secret never reaches a stream we did not hand out | The prompt goes to stderr, a terminal reads the secret and writes no prompt, and the file is 0600 | A read that fails is refused by name; a typed token keeps its own whitespace; the token is absent from stdout, stderr, and the confirmation |
 | The help is the interface | The block in [`cli.md`](cli.md#help-text), compared with what the binary prints; every flag present in `--help` and absent where it could not act | A description column that moved; `--api-key` parsed as a flag; an evaluation flag accepted by `models` or `auth` |
 
@@ -199,6 +200,7 @@ client::a_server_that_never_answers_times_out;
 config::the_store_supplies_the_credential_when_nothing_else_does;
 config::a_named_file_that_cannot_be_read_does_not_fall_through_to_the_store;
 config::the_store_is_readable_only_by_its_owner;
+cli::check_is_a_flag_on_status_and_nowhere_else;
 config::a_credential_is_read_from_a_pipe_without_a_prompt;
 config::a_terminal_is_prompted_and_the_prompt_goes_to_stderr;
 config::a_terminal_read_that_fails_is_refused_by_name;

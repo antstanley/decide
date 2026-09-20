@@ -250,7 +250,11 @@ pub enum AuthCommand {
 
     /// Say where the credential comes from, without printing it
     #[command(long_about = AUTH_STATUS_LONG_ABOUT)]
-    Status,
+    Status {
+        /// Call the API and check that it accepts the key
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 impl Command {
@@ -371,12 +375,19 @@ Nothing else is touched: an environment variable or a file named with --api-key-
 still supplies a credential after this.";
 
 /// `decide auth status --help`'s long description.
-const AUTH_STATUS_LONG_ABOUT: &str = r"Say which of the three sources supplies the credential.
+const AUTH_STATUS_LONG_ABOUT: &str = r"Say which source supplies the credential, and whether the API accepts it.
 
   decide auth status
+  decide auth status --check
 
 The order is TYPESAFE_API_KEY, then --api-key-file or TYPESAFE_API_KEY_FILE, then the
-store. The value is never printed.";
+store. The value is never printed, and without --check nothing leaves the machine.
+
+With --check, one GET /v1/models is made with the credential that was found. It costs
+no tokens, and it answers the question the other way round: whether the key the API
+holds is the key you hold. A key the API refuses is the 401 it is, so a script can stop
+with `decide auth status --check || exit 1`, and a --check that cannot reach the API
+says so rather than reporting the key as good.";
 
 /// `decide score --help`'s long description.
 const SCORE_LONG_ABOUT: &str = r#"Ask for a position along ordered levels you define.
@@ -619,7 +630,7 @@ mod tests {
         for (argument, expected) in [
             ("set", AuthCommand::Set),
             ("unset", AuthCommand::Unset),
-            ("status", AuthCommand::Status),
+            ("status", AuthCommand::Status { check: false }),
         ] {
             let cli = accepted(&["decide", "auth", argument]);
             let Command::Auth { command } = &cli.command else {
@@ -650,6 +661,32 @@ mod tests {
         let error = parse(&["decide", "auth", "forget"]).expect_err("there is no forget");
 
         assert_eq!(error.kind(), ErrorKind::InvalidSubcommand);
+    }
+
+    #[test]
+    fn check_is_a_flag_on_status_and_nowhere_else() {
+        let cli = accepted(&["decide", "auth", "status", "--check"]);
+        let Command::Auth { command } = &cli.command else {
+            panic!("that is the auth subcommand");
+        };
+        assert_eq!(command, &AuthCommand::Status { check: true });
+
+        let cli = accepted(&["decide", "auth", "status"]);
+        let Command::Auth { command } = &cli.command else {
+            panic!("that is the auth subcommand");
+        };
+        assert_eq!(
+            command,
+            &AuthCommand::Status { check: false },
+            "the check is opt-in: status is local and instant by default"
+        );
+
+        for action in ["set", "unset"] {
+            assert!(
+                parse(&["decide", "auth", action, "--check"]).is_err(),
+                "{action} has nothing to check"
+            );
+        }
     }
 
     #[test]

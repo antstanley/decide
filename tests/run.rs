@@ -525,6 +525,125 @@ fn models_is_printed_whole_and_can_be_selected_from() {
 }
 
 #[test]
+fn auth_status_check_says_that_the_api_accepted_the_key() {
+    let server = FakeServer::start(vec![Reply::json(MODELS)]);
+    let (_key, key) = key_file();
+
+    let outcome = run(
+        &[
+            "decide",
+            "auth",
+            "status",
+            "--check",
+            "--base-url",
+            &server.url(),
+            "--api-key-file",
+            &key,
+        ],
+        "",
+        true,
+    );
+
+    assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+    assert!(
+        outcome.stdout.contains("the API accepted it"),
+        "{}",
+        outcome.stdout
+    );
+    let seen = server.seen();
+    let request = seen.first().expect("one request was seen");
+    assert_eq!(request.method, "GET");
+    assert_eq!(
+        request.path, "/v1/models",
+        "the check must not spend tokens on an evaluation"
+    );
+    assert_eq!(request.header("authorization"), Some("Bearer sekrit-token"));
+}
+
+#[test]
+fn auth_status_check_reports_a_key_the_api_refuses() {
+    let server = FakeServer::start(vec![Reply::status(401, r#"{"error":"invalid key"}"#)]);
+    let (_key, key) = key_file();
+
+    let outcome = run(
+        &[
+            "decide",
+            "auth",
+            "status",
+            "--check",
+            "--base-url",
+            &server.url(),
+            "--api-key-file",
+            &key,
+        ],
+        "",
+        true,
+    );
+
+    let error = outcome.result.expect_err("the API refused the key");
+    assert_eq!(error.exit_code(), 1, "a refused key is the 401 it is");
+    assert!(
+        outcome.stdout.is_empty(),
+        "a failed check prints no verdict"
+    );
+    let rendered = error.to_string();
+    assert!(rendered.contains("401"), "{rendered}");
+    assert!(rendered.contains("invalid key"), "{rendered}");
+}
+
+#[test]
+fn auth_status_check_does_not_accept_an_answer_that_is_not_the_apis() {
+    let server = FakeServer::start(vec![Reply::json("<html>a captive portal</html>")]);
+    let (_key, key) = key_file();
+
+    let outcome = run(
+        &[
+            "decide",
+            "auth",
+            "status",
+            "--check",
+            "--base-url",
+            &server.url(),
+            "--api-key-file",
+            &key,
+        ],
+        "",
+        true,
+    );
+
+    let error = outcome
+        .result
+        .expect_err("a 200 is not an acceptance on its own");
+    assert_eq!(error.exit_code(), 1);
+    assert!(outcome.stdout.is_empty());
+}
+
+#[test]
+fn auth_status_without_check_makes_no_call() {
+    // A server that would answer `500` loudly if anything asked it anything.
+    let server = FakeServer::start(vec![Reply::status(500, "should not be called")]);
+    let (_key, key) = key_file();
+
+    let outcome = run(
+        &[
+            "decide",
+            "auth",
+            "status",
+            "--base-url",
+            &server.url(),
+            "--api-key-file",
+            &key,
+        ],
+        "",
+        true,
+    );
+
+    assert!(outcome.result.is_ok(), "{:?}", outcome.result);
+    assert_eq!(server.count(), 0, "status alone never leaves the machine");
+    assert!(outcome.stdout.contains("api-key"), "{}", outcome.stdout);
+}
+
+#[test]
 fn the_credential_is_never_written_to_stdout() {
     let server = FakeServer::start(vec![Reply::json(ANSWERS)]);
     let (_key, key) = key_file();

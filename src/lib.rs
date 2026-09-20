@@ -147,17 +147,25 @@ fn auth_at<In: Read, Out: Write, Err: Write>(
                 note(&mut io.stderr, "there was no stored token")
             }
         }
-        AuthCommand::Status => {
-            let source = config::resolve(
+        AuthCommand::Status { check } => {
+            let resolved = config::resolve(
                 environment.map(str::to_string),
                 global.api_key_file.as_deref(),
                 Some(path),
             );
-            match source {
+            match resolved {
+                Ok((source, key)) if *check => {
+                    check_credential(&source, key, global, io)?;
+                    emit(
+                        &mut io.stdout,
+                        &format!("{}: the API accepted it", source.describe()),
+                    )
+                }
                 Ok((source, _)) => emit(&mut io.stdout, &source.describe()),
-                // Nothing configured is a fact to report, not a failure to raise: this is
-                // the command a caller runs to find out why a call failed.
-                Err(DecideError::MissingApiKey) => emit(
+                // Nothing configured is a fact to report rather than a failure to raise, so
+                // `status` alone says so and succeeds. `--check` has nothing to check, which
+                // is the missing-credential error every other subcommand would raise.
+                Err(DecideError::MissingApiKey) if !*check => emit(
                     &mut io.stdout,
                     &format!(
                         "no credential is configured; `decide auth set` would store one in \
@@ -320,6 +328,25 @@ fn prepare<In: Read>(command: &Command, stdin: &mut Stdin<In>) -> Result<Prepare
     }
 }
 
+/// Exercise the credential, and refuse anything that is not an acceptance.
+///
+/// One `GET /v1/models`: it is the only call besides the evaluation, it needs the same
+/// bearer token, and unlike an evaluation it spends no tokens. A refusal arrives as the
+/// `401` it is and travels the ordinary status path, so the exit code, the reason phrase,
+/// and the body are the ones a caller already knows how to read — and a `200` that is not
+/// the API's answer (a proxy, a captive portal) is not an acceptance either.
+fn check_credential<In: Read, Out: Write, Err: Write>(
+    _source: &config::Source,
+    api_key: String,
+    global: &GlobalArgs,
+    io: &mut Io<In, Out, Err>,
+) -> Result<(), DecideError> {
+    let config = client_config_with(global, api_key)?;
+    let body = client::get_models(&config, &mut io.stderr)?;
+    wire::ModelsResponse::from_slice(body.as_bytes())?;
+    Ok(())
+}
+
 /// The state flags, in the shape the resolver wants them.
 fn state_args(eval: &EvalArgs) -> input::StateArgs<'_> {
     input::StateArgs {
@@ -338,6 +365,14 @@ fn client_config(global: &GlobalArgs) -> Result<client::ClientConfig, DecideErro
         global.api_key_file.as_deref(),
         stored.as_deref(),
     )?;
+    client_config_with(global, api_key)
+}
+
+/// The same, for a credential that has already been resolved.
+fn client_config_with(
+    global: &GlobalArgs,
+    api_key: String,
+) -> Result<client::ClientConfig, DecideError> {
     Ok(client::ClientConfig {
         base_url: input::resolve_base_url(&global.base_url)?,
         api_key,
@@ -588,7 +623,7 @@ mod tests {
         let (_dir, path) = store_path();
         config::store_at(&path, "sekrit-token").expect("writable");
 
-        let outcome = auth(&AuthCommand::Status, &path, "", true);
+        let outcome = auth(&AuthCommand::Status { check: false }, &path, "", true);
 
         assert!(outcome.result.is_ok(), "{:?}", outcome.result);
         assert!(
@@ -604,7 +639,13 @@ mod tests {
         let (_dir, path) = store_path();
         config::store_at(&path, "stored-token").expect("writable");
 
-        let outcome = auth_with(&AuthCommand::Status, &path, "", true, Some("env-token"));
+        let outcome = auth_with(
+            &AuthCommand::Status { check: false },
+            &path,
+            "",
+            true,
+            Some("env-token"),
+        );
 
         assert!(outcome.result.is_ok(), "{:?}", outcome.result);
         assert_eq!(outcome.stdout, "TYPESAFE_API_KEY\n", "the environment wins");
@@ -614,10 +655,90 @@ mod tests {
     }
 
     #[test]
+    fn auth_status_check_without_a_credential_is_the_missing_key_error() {
+        let (_dir, path) = store_path();
+
+        let outcome = auth(&AuthCommand::Status { check: true }, &path, "", true);
+
+        let error = outcome.result.expect_err("there is nothing to check");
+        assert_eq!(error.exit_code(), 2);
+        assert!(
+            outcome.stdout.is_empty(),
+            "a failed run leaves stdout empty, even for `status`"
+        );
+    }
+
+    #[test]
+    fn auth_status_check_reports_a_credential_it_cannot_exercise() {
+        let (_dir, path) = store_path();
+        config::store_at(&path, "stored-token").expect("writable");
+        // Nothing is listening on port 9, so the check cannot be made.
+        let mut global = plain_global();
+        global.base_url = "http://127.0.0.1:9/v1/systemone".to_string();
+        global.retries = 0;
+
+        let mut io = Io {
+            stdin: Stdin::new(Cursor::new(Vec::new()), true),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        let mut typed = Typed("typed-at-the-prompt");
+        let result = auth_at(
+            &AuthCommand::Status { check: true },
+            &path,
+            None,
+            &mut typed,
+            &global,
+            &mut io,
+        );
+
+        let error = result.expect_err("the check could not be made");
+        assert_eq!(
+            error.exit_code(),
+            1,
+            "a check that fails is a failed evaluation"
+        );
+        assert!(io.stdout.is_empty());
+        assert!(error.to_string().contains("attempt"), "{error}");
+    }
+
+    #[test]
+    fn auth_status_without_check_never_leaves_the_machine() {
+        let (_dir, path) = store_path();
+        config::store_at(&path, "stored-token").expect("writable");
+        let mut global = plain_global();
+        // A base URL that would fail if anything tried to use it.
+        global.base_url = "http://127.0.0.1:9/v1/systemone".to_string();
+
+        let mut io = Io {
+            stdin: Stdin::new(Cursor::new(Vec::new()), true),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        let mut typed = Typed("typed-at-the-prompt");
+        let result = auth_at(
+            &AuthCommand::Status { check: false },
+            &path,
+            None,
+            &mut typed,
+            &global,
+            &mut io,
+        );
+
+        assert!(result.is_ok(), "{result:?}");
+        assert!(
+            String::from_utf8(io.stdout)
+                .expect("text")
+                .contains("stored at"),
+            "the answer is local: the source, and nothing about the network"
+        );
+    }
+
+    #[test]
     fn auth_status_reports_nothing_configured_rather_than_failing() {
         let (_dir, path) = store_path();
 
-        let outcome = auth(&AuthCommand::Status, &path, "", true);
+        let outcome = auth(&AuthCommand::Status { check: false }, &path, "", true);
 
         assert!(outcome.result.is_ok(), "{:?}", outcome.result);
         assert!(

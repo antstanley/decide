@@ -39,6 +39,8 @@ stored the token in "/home/you/.config/decide/api-key"
 
 $ decide auth status        # which source supplies the credential, never the value
 the credential stored at "/home/you/.config/decide/api-key"
+$ decide auth status --check   # and does the API accept it?
+the credential stored at "/home/you/.config/decide/api-key": the API accepted it
 $ decide auth unset         # forget it again
 ```
 
@@ -65,6 +67,15 @@ Three sources, in this order, and the first one that supplies a key wins:
 The environment is first so that a script or a CI runner can override what is stored for
 one call. `TYPESAFE_DEFAULT_MODEL` names the model when neither `--model` nor the request
 document does.
+
+`auth status` on its own touches nothing outside the machine — it is the first thing to run
+when a call has already failed. `--check` adds one `GET /v1/models` with the credential that
+was found, which needs the network but spends no tokens, and fails with the API's own `401`
+when the key is wrong:
+
+```sh
+decide auth status --check || exit 1
+```
 
 ## The two shapes
 

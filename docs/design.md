@@ -459,6 +459,30 @@ disagreement, and the only safe response is to stop.
 The same rule covers `--base-url`, `--timeout`, `--retries`, `--backoff-ms`, and
 `--api-key-file`: knobs override, meaning conflicts.
 
+### D18. `auth status` is local; `--check` is the one that calls
+
+`decide auth status` answers "where does the credential come from" without touching the
+network. That is the command a caller runs when a call has *already* failed, and a
+diagnostic that needs the thing it is diagnosing is not much of a diagnostic.
+
+`--check` adds the other half of the question — whether the API accepts the key — as an
+opt-in, because it changes both what the command needs (a network, a timeout, a retry
+policy) and what it can do (fail in ways that have nothing to do with the credential).
+
+The call is `GET /v1/models`. It needs the same bearer token, and unlike an evaluation it
+spends no tokens, which is what makes it cheap enough to run after every `auth set`. A key
+the API refuses is left as the `401` the rest of the program already reports, so the exit
+code, the reason phrase, and the body are the ones a caller has read before, and
+`decide auth status --check || exit 1` is the whole script. A `200` that is not the API's
+answer — a proxy, a captive portal — is not an acceptance, because the check parses the
+body.
+
+*Rejected:* checking on every `auth status`. It would make a local command depend on a
+network and a clock, and it would break the property the suite is built on: that `status` is
+a question about this machine. *Rejected:* checking with the evaluation endpoint, which
+answers the same question for the price of a state, a question, and the tokens the two cost.
+*Rejected:* a separate `auth check` action, which reads as two questions where there is one.
+
 ## The module map
 
 ```
